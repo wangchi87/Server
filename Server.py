@@ -9,7 +9,7 @@ class ServerEnd:
     port = 12354
     host = None
 
-    RECV_BUFFER = 1
+    RECV_BUFFER = 4096
 
     sockCollections = []
 
@@ -26,12 +26,13 @@ class ServerEnd:
 
     def __broadcastClientMsg(self, msgSock, msg):
 
+        sockAddr = msgSock.getpeername()[0]
+        sockPort = str(msgSock.getpeername()[1])
+
         # send msg to all clients except for msgSock and serverSock
         for sock in self.sockCollections:
             try:
                 if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
-                    sockAddr = sock.getpeername()[0]
-                    sockPort = str(sock.getpeername()[1])
                     socketSend(sock, sockAddr + ", "+ sockPort + ": "+ msg)
             except:
                 sock.close()
@@ -43,10 +44,14 @@ class ServerEnd:
         for sock in self.sockCollections:
             try:
                 if sock != self.serverSock and type(sock) == socket._socketobject:
-                    socketSend(sock, 'server msg:' + msg)
+                    socketSend(sock, 'server msg: ' + msg)
             except:
                 sock.close()
                 self.sockCollections.remove(sock)
+
+    def __closeServer(self):
+        self.__broadcastServerMsg("SERVER_SHUTDOWN")
+        self.serverSock.close()
 
 
     def __mainLoop(self):
@@ -60,6 +65,7 @@ class ServerEnd:
 
         try:
             while 1:
+                #print self.sockCollections
                 readList, writeList, errorList = select.select(self.sockCollections, [], [])
 
                 quitProgram = False
@@ -71,15 +77,15 @@ class ServerEnd:
                         newClient, newAddr = socketAccept(sock)
                         self.sockCollections.append(newClient)
                         print "new client connected ", newAddr
-                        self.__broadcastClientMsg(newClient, ("new client connected " + newAddr[0] + " " + str(newAddr[1])))
+                        self.__broadcastClientMsg(newClient, "new client connected ")
 
                     else:
                         if type(sock) == socket._socketobject:
                             # msg received from client
                             recvedData = socketRecv(sock, self.RECV_BUFFER)
                             if recvedData == "CLIENT_SHUTDOWN":
-                                self.__broadcastClientMsg(sock, (
-                                        "client disconnected " + newAddr[0] + " " + str(newAddr[1])))
+                                print "client disconnected", str(sock.getpeername())
+                                self.__broadcastClientMsg(sock, "client disconnected ")
                                 sock.close()
                                 self.sockCollections.remove(sock)
                             else:
@@ -88,29 +94,28 @@ class ServerEnd:
 
                         if type(sock) == file:
                             msg = sys.stdin.readline()
-                            if msg == 'esc\n':
-                                self.__broadcastServerMsg("SERVER_SHUTDOWN")
+                            if msg == 'esc\n' or msg == '':
                                 quitProgram = True
                             else:
                                 self.__broadcastServerMsg(msg)
                             # broadcastMsg(connections, serverSocket, msg)
 
                 if quitProgram:
-                    self.serverSock.close()
+                    self.__closeServer()
+
                     break
 
         except Exception as e:
             # choose exception type
             print 'Exception', e
-            self.serverSock.close()
+            self.__closeServer()
 
         except KeyboardInterrupt:
             print 'KeyboardInterrupt'
-            self.serverSock.close()
+            self.__closeServer()
 
         finally:
             print "end of server program"
-
 
 
 if __name__ == "__main__":
