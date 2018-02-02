@@ -31,7 +31,7 @@ def socketAccept(sock):
 
 def socketConnection(sock, host, port):
     try:
-        sock.connect((host,port))
+        sock.connect((host, port))
     except socket.gaierror as err:
         print "failed to connect to server: ", err
 
@@ -41,7 +41,7 @@ def socketSend(sock, data):
     data += 'EOD'
 
     try:
-        sock.send(data)
+        sock.sendall(data)
     except socket.error as err:
         print "failed to send data: ", err
 
@@ -49,13 +49,17 @@ def socketRecv(sock, recvBuffSize):
 
     data = ''
     while 1:
-        try:
-            buf = sock.recv(recvBuffSize)
-        except socket.error as err:
-            print "failed to receive data", err
-        else:
-            data = data + buf
-            if data[-3:] == 'EOD':
-                break
+
+        buf = sock.recv(recvBuffSize)
+
+        data = data + buf
+
+        if data[-3:] == 'EOD':
+             break
+
+        # client never send ''!
+        # this will happen only when the client is terminated unexpectedly
+        if data == '':
+            return data
 
     return data[:-3]

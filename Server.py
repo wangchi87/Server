@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 
 import select, sys
 
@@ -13,9 +14,12 @@ class ServerEnd:
 
     sockCollections = []
 
-    def __init__(self):
-        self.host = socket.gethostname()
+    messageList = {}
 
+    def __init__(self):
+        self.sockCollections = []
+        self.messageList = {}
+        self.host = socket.gethostname()
         self.__mainLoop()
 
     def assignHostAddr(self, host):
@@ -53,22 +57,29 @@ class ServerEnd:
         self.__broadcastServerMsg("SERVER_SHUTDOWN")
         self.serverSock.close()
 
-
     def __mainLoop(self):
 
         self.serverSock = socketCreation()
         socketBind(self.serverSock, self.host, self.port)
+        self.serverSock.setblocking(False)
         socketListen(self.serverSock)
 
         self.sockCollections.append(self.serverSock)
         self.sockCollections.append(sys.stdin)
 
+        self.messageList[self.serverSock] = []
+
         try:
             while 1:
                 #print self.sockCollections
-                readList, writeList, errorList = select.select(self.sockCollections, [], [])
+
+                print 'select'
+                readList, writeList, errorList = select.select(self.sockCollections, [], self.sockCollections)
 
                 quitProgram = False
+
+                print readList
+
 
                 for sock in readList:
 
@@ -77,32 +88,44 @@ class ServerEnd:
                         newClient, newAddr = socketAccept(sock)
                         self.sockCollections.append(newClient)
                         print "new client connected ", newAddr
-                        self.__broadcastClientMsg(newClient, "new client connected ")
-
+                        self.__broadcastClientMsg(newClient, "new client connected \n")
+                        self.messageList[newClient] = []
                     else:
                         if type(sock) == socket._socketobject:
                             # msg received from client
-                            recvedData = socketRecv(sock, self.RECV_BUFFER)
-                            if recvedData == "CLIENT_SHUTDOWN":
-                                print "client disconnected", str(sock.getpeername())
-                                self.__broadcastClientMsg(sock, "client disconnected ")
+                            try:
+                                # 如果客户端异常关闭，这里会引起无限阻塞！！
+                                recvedData = socketRecv(sock, self.RECV_BUFFER)
+                            except socket.error as err:
+                                print "failed to receive data", err
                                 sock.close()
                                 self.sockCollections.remove(sock)
                             else:
-                                print 'msg from :', str(sock.getpeername()), recvedData
-                                self.__broadcastClientMsg(sock, recvedData)
+                                self.messageList[sock].append(recvedData)
+                                if recvedData == "CLIENT_SHUTDOWN" or recvedData == '':
+                                    print "client disconnected", str(sock.getpeername())
+                                    self.__broadcastClientMsg(sock, "client disconnected \n")
+                                    sock.close()
+                                    self.sockCollections.remove(sock)
+                                else:
+                                    print 'msg from :', str(sock.getpeername()), recvedData
+                                    self.__broadcastClientMsg(sock, recvedData)
 
                         if type(sock) == file:
                             msg = sys.stdin.readline()
+                            self.messageList[self.serverSock] = msg
                             if msg == 'esc\n' or msg == '':
                                 quitProgram = True
                             else:
                                 self.__broadcastServerMsg(msg)
                             # broadcastMsg(connections, serverSocket, msg)
 
+                for sock in errorList:
+                    sock.close()
+                    self.sockCollections.remove(sock)
+
                 if quitProgram:
                     self.__closeServer()
-
                     break
 
         except Exception as e:
@@ -116,6 +139,7 @@ class ServerEnd:
 
         finally:
             print "end of server program"
+            #print self.messageList
 
 
 if __name__ == "__main__":
