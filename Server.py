@@ -57,6 +57,28 @@ class ServerEnd:
         self.__broadcastServerMsg("SERVER_SHUTDOWN")
         self.serverSock.close()
 
+    def set_keepalive_linux(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
+        """Set TCP keepalive on an open socket.
+
+        It activates after 1 second (after_idle_sec) of idleness,
+        then sends a keepalive ping once every 3 seconds (interval_sec),
+        and closes the connection after 5 failed ping (max_fails), or 15 seconds
+        """
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
+
+    def set_keepalive_osx(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
+        """Set TCP keepalive on an open socket.
+
+        sends a keepalive ping once every 3 seconds (interval_sec)
+        """
+        # scraped from /usr/include, not exported by python's socket module
+        TCP_KEEPALIVE = 0x10
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, interval_sec)
+
     def __mainLoop(self):
 
         self.serverSock = socketCreation()
@@ -73,12 +95,12 @@ class ServerEnd:
             while 1:
                 #print self.sockCollections
 
-                print 'select'
+                # print 'select'
                 readList, writeList, errorList = select.select(self.sockCollections, [], self.sockCollections)
 
                 quitProgram = False
 
-                print readList
+                # print readList
 
 
                 for sock in readList:
@@ -86,6 +108,7 @@ class ServerEnd:
                     if sock == self.serverSock:
                         # new client
                         newClient, newAddr = socketAccept(sock)
+                        #self.set_keepalive_osx(newClient)
                         self.sockCollections.append(newClient)
                         print "new client connected ", newAddr
                         self.__broadcastClientMsg(newClient, "new client connected \n")
@@ -94,7 +117,6 @@ class ServerEnd:
                         if type(sock) == socket._socketobject:
                             # msg received from client
                             try:
-                                # 如果客户端异常关闭，这里会引起无限阻塞！！
                                 recvedData = socketRecv(sock, self.RECV_BUFFER)
                             except socket.error as err:
                                 print "failed to receive data", err
