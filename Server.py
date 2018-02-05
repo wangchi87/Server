@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import select, sys
+import select
+import sys
+import threading
 
+from ClientInfo import *
 from SocketWrapper import *
+
 
 class ServerEnd:
 
@@ -12,14 +16,28 @@ class ServerEnd:
 
     RECV_BUFFER = 4096
 
+    # all socket are stored in sockCollections
+    # this is the input in select function
     sockCollections = []
 
     messageList = {}
+
+    # we apply a dict to manage client sock
+    # detecting the status of connected sock
+    clientManagement = {}
+
+    # heart beat loop status
+    hbLoop = True
 
     def __init__(self):
         self.sockCollections = []
         self.messageList = {}
         self.host = socket.gethostname()
+
+        self.hbThread = threading.Thread(target=self.__detectClientStatus)
+        self.hbThread.setDaemon(True)
+        self.hbThread.start()
+
         self.__mainLoop()
 
     def assignHostAddr(self, host):
@@ -54,54 +72,42 @@ class ServerEnd:
                 self.sockCollections.remove(sock)
 
     def __closeServer(self):
+        self.hbLoop = False
         self.__broadcastServerMsg("SERVER_SHUTDOWN")
         self.serverSock.close()
 
-    def set_keepalive_linux(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
-        """Set TCP keepalive on an open socket.
+    def __closeDeadClient(self, sock):
+        print "client disconnected", str(sock.getpeername())
+        sock.close()
+        self.sockCollections.remove(sock)
 
-        It activates after 1 second (after_idle_sec) of idleness,
-        then sends a keepalive ping once every 3 seconds (interval_sec),
-        and closes the connection after 5 failed ping (max_fails), or 15 seconds
-        """
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
+    def __detectClientStatus(self):
+        print "ds"
+        while self.hbLoop:
+            print "detect client status"
+            time.sleep(2)
+            for sock, client in self.clientManagement.items():
+                if client.isClientOffline():
+                    self.__closeDeadClient(sock)
 
-    def set_keepalive_osx(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
-        """Set TCP keepalive on an open socket.
-
-        sends a keepalive ping once every 3 seconds (interval_sec)
-        """
-        # scraped from /usr/include, not exported by python's socket module
-        TCP_KEEPALIVE = 0x10
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, interval_sec)
-
-    def __mainLoop(self):
-
+    def __setupSocket(self):
         self.serverSock = socketCreation()
         socketBind(self.serverSock, self.host, self.port)
-        self.serverSock.setblocking(False)
         socketListen(self.serverSock)
 
         self.sockCollections.append(self.serverSock)
         self.sockCollections.append(sys.stdin)
 
+    def __mainLoop(self):
+
+        self.__setupSocket()
         self.messageList[self.serverSock] = []
 
         try:
             while 1:
-                #print self.sockCollections
-
-                # print 'select'
                 readList, writeList, errorList = select.select(self.sockCollections, [], self.sockCollections)
 
                 quitProgram = False
-
-                # print readList
-
 
                 for sock in readList:
 
@@ -110,6 +116,7 @@ class ServerEnd:
                         newClient, newAddr = socketAccept(sock)
                         #self.set_keepalive_osx(newClient)
                         self.sockCollections.append(newClient)
+                        # self.clientManagement[newClient] = ClientInfo(newClient)
                         print "new client connected ", newAddr
                         self.__broadcastClientMsg(newClient, "new client connected \n")
                         self.messageList[newClient] = []
@@ -120,15 +127,14 @@ class ServerEnd:
                                 recvedData = socketRecv(sock, self.RECV_BUFFER)
                             except socket.error as err:
                                 print "failed to receive data", err
-                                sock.close()
-                                self.sockCollections.remove(sock)
+                                self.__closeDeadClient(sock)
                             else:
                                 self.messageList[sock].append(recvedData)
                                 if recvedData == "CLIENT_SHUTDOWN" or recvedData == '':
-                                    print "client disconnected", str(sock.getpeername())
                                     self.__broadcastClientMsg(sock, "client disconnected \n")
-                                    sock.close()
-                                    self.sockCollections.remove(sock)
+                                    self.__closeDeadClient(sock)
+                                if recvedData == "PyHB":
+                                    pass
                                 else:
                                     print 'msg from :', str(sock.getpeername()), recvedData
                                     self.__broadcastClientMsg(sock, recvedData)
@@ -162,6 +168,28 @@ class ServerEnd:
         finally:
             print "end of server program"
             #print self.messageList
+
+    def set_keepalive_linux(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
+        """Set TCP keepalive on an open socket.
+
+        It activates after 1 second (after_idle_sec) of idleness,
+        then sends a keepalive ping once every 3 seconds (interval_sec),
+        and closes the connection after 5 failed ping (max_fails), or 15 seconds
+        """
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
+
+    def set_keepalive_osx(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
+        """Set TCP keepalive on an open socket.
+
+        sends a keepalive ping once every 3 seconds (interval_sec)
+        """
+        # scraped from /usr/include, not exported by python's socket module
+        TCP_KEEPALIVE = 0x10
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, interval_sec)
 
 
 if __name__ == "__main__":
