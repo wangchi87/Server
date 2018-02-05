@@ -3,6 +3,7 @@
 import select
 import sys
 import threading
+import json
 
 from ClientInfo import *
 from SocketWrapper import *
@@ -38,7 +39,6 @@ class ServerEnd:
         self.hbThread.setDaemon(True)
         self.hbThread.start()
 
-
         self.__mainLoop()
 
     def assignHostAddr(self, host):
@@ -72,6 +72,15 @@ class ServerEnd:
                 sock.close()
                 self.sockCollections.remove(sock)
 
+    def __initSocket(self):
+        self.serverSock = socketCreation()
+        socketBind(self.serverSock, self.host, self.port)
+        self.serverSock.setblocking(False)
+        socketListen(self.serverSock)
+
+        self.sockCollections.append(self.serverSock)
+        self.sockCollections.append(sys.stdin)
+
     def __closeServer(self):
         print "close server !!"
         self.hbLoop = False
@@ -95,30 +104,39 @@ class ServerEnd:
                 if client.isClientOffline():
                     print sock, "is OFFLINE"
                     self.__closeDeadClient(sock)
-                # else:
-                #    print sock, "is online"
         print 'end of client status detection'
 
-    def __setupSocket(self):
-        self.serverSock = socketCreation()
-        socketBind(self.serverSock, self.host, self.port)
-        self.serverSock.setblocking(False)
-        socketListen(self.serverSock)
 
-        self.sockCollections.append(self.serverSock)
-        self.sockCollections.append(sys.stdin)
+    def __processRecvedData(self, sock, recvedData):
+        if (not recvedData) or recvedData == "CLIENT_SHUTDOWN":
+            self.__broadcastClientMsg(sock, "client disconnected \n")
+            self.__closeDeadClient(sock)
+        elif recvedData == "-^-^-pyHB-^-^-":
+            self.clientManagement[sock].updateOnlineStatus()
+        else:
+            self.messageList[sock].append(recvedData)
+            print 'msg from :', str(sock.getpeername()), recvedData, json.loads(recvedData)
+            self.__broadcastClientMsg(sock, recvedData)
+
+    def __acceptNewClient(self, sock):
+        self.clientManagement[sock] = ClientInfo(sock)
+        self.sockCollections.append(sock)
+        print "new client connected ", sock.getpeername()
+        self.__broadcastClientMsg(sock, "new client connected \n")
+        self.messageList[sock] = []
 
     def __mainLoop(self):
 
-        self.__setupSocket()
+        self.__initSocket()
         self.messageList[self.serverSock] = []
 
+        quitProgram = False
+
         try:
-            while 1:
+            while not quitProgram:
                 #print 'selecting', self.sockCollections
                 readList, writeList, errorList = select.select(self.sockCollections, [], self.sockCollections)
 
-                quitProgram = False
 
                 for sock in readList:
 
@@ -126,11 +144,7 @@ class ServerEnd:
                         # new client
                         newClient, newAddr = socketAccept(sock)
                         #self.set_keepalive_osx(newClient)
-                        self.clientManagement[newClient] = ClientInfo(newClient)
-                        self.sockCollections.append(newClient)
-                        print "new client connected ", newAddr
-                        self.__broadcastClientMsg(newClient, "new client connected \n")
-                        self.messageList[newClient] = []
+                        self.__acceptNewClient(newClient)
                     else:
                         if type(sock) == socket._socketobject:
                             # msg received from client
@@ -140,15 +154,7 @@ class ServerEnd:
                                 print "failed to receive data", err
                                 self.__closeDeadClient(sock)
                             else:
-                                if recvedData == "CLIENT_SHUTDOWN" or (not recvedData):
-                                    self.__broadcastClientMsg(sock, "client disconnected \n")
-                                    self.__closeDeadClient(sock)
-                                elif recvedData == "****pyHB****":
-                                    self.clientManagement[sock].updateOnlineStatus()
-                                else:
-                                    self.messageList[sock].append(recvedData)
-                                    print 'msg from :', str(sock.getpeername()), recvedData
-                                    self.__broadcastClientMsg(sock, recvedData)
+                                self.__processRecvedData(sock, recvedData)
 
                         if type(sock) == file:
                             msg = sys.stdin.readline()
@@ -157,11 +163,9 @@ class ServerEnd:
                                 quitProgram = True
                             else:
                                 self.__broadcastServerMsg(msg)
-                            # broadcastMsg(connections, serverSocket, msg)
 
                 for sock in errorList:
-                    sock.close()
-                    self.sockCollections.remove(sock)
+                    self.__closeDeadClient(sock)
 
                 if quitProgram:
                     self.__closeServer()
