@@ -62,8 +62,8 @@ def socketRecv(sock, recvBuffSize):
 
         # client never send ''!
         # this will happen only when the client is terminated unexpectedly
-        if data == '':
-            print 'receive empty string!'
+        if not data:
+            # print 'receive empty string!'
             return data
 
     return data[:-3]

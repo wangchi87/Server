@@ -1,6 +1,6 @@
 import time
 
-threshold = 2
+threshold = 1
 
 
 class ClientInfo(dict):
@@ -13,9 +13,9 @@ class ClientInfo(dict):
     def __init__(self, sock):
         self.sock = sock
         self.loginTime = time.localtime()
-        self.__updateOnlineStatus()
+        self.updateOnlineStatus()
 
-    def __updateOnlineStatus(self):
+    def updateOnlineStatus(self):
         self.lastCheckInTime = time.time()
 
     def isClientOffline(self):

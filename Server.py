@@ -16,8 +16,6 @@ class ServerEnd:
 
     RECV_BUFFER = 4096
 
-    # all socket are stored in sockCollections
-    # this is the input in select function
     sockCollections = []
 
     messageList = {}
@@ -25,18 +23,21 @@ class ServerEnd:
     # we apply a dict to manage client sock
     # detecting the status of connected sock
     clientManagement = {}
-
-    # heart beat loop status
+    clientManagementLock = None
+    # heart beat loop status and thread
     hbLoop = True
+    hbThread = None
 
     def __init__(self):
         self.sockCollections = []
         self.messageList = {}
-        self.host = socket.gethostname()
+        self.host = '127.0.0.1'  # socket.gethostname()
 
+        self.clientManagementLock = threading.Lock()
         self.hbThread = threading.Thread(target=self.__detectClientStatus)
         self.hbThread.setDaemon(True)
         self.hbThread.start()
+
 
         self.__mainLoop()
 
@@ -72,27 +73,36 @@ class ServerEnd:
                 self.sockCollections.remove(sock)
 
     def __closeServer(self):
+        print "close server !!"
         self.hbLoop = False
         self.__broadcastServerMsg("SERVER_SHUTDOWN")
         self.serverSock.close()
 
     def __closeDeadClient(self, sock):
         print "client disconnected", str(sock.getpeername())
+        #self.clientManagementLock.acquire()
         sock.close()
+        self.clientManagement.__delitem__(sock)
         self.sockCollections.remove(sock)
+        #self.clientManagementLock.release()
 
     def __detectClientStatus(self):
-        print "ds"
+        print "start detecting client status"
         while self.hbLoop:
-            print "detect client status"
+            #print "detect client status", self.clientManagement, self.hbLoop
             time.sleep(2)
             for sock, client in self.clientManagement.items():
                 if client.isClientOffline():
+                    print sock, "is OFFLINE"
                     self.__closeDeadClient(sock)
+                # else:
+                #    print sock, "is online"
+        print 'end of client status detection'
 
     def __setupSocket(self):
         self.serverSock = socketCreation()
         socketBind(self.serverSock, self.host, self.port)
+        self.serverSock.setblocking(False)
         socketListen(self.serverSock)
 
         self.sockCollections.append(self.serverSock)
@@ -105,6 +115,7 @@ class ServerEnd:
 
         try:
             while 1:
+                #print 'selecting', self.sockCollections
                 readList, writeList, errorList = select.select(self.sockCollections, [], self.sockCollections)
 
                 quitProgram = False
@@ -115,8 +126,8 @@ class ServerEnd:
                         # new client
                         newClient, newAddr = socketAccept(sock)
                         #self.set_keepalive_osx(newClient)
+                        self.clientManagement[newClient] = ClientInfo(newClient)
                         self.sockCollections.append(newClient)
-                        # self.clientManagement[newClient] = ClientInfo(newClient)
                         print "new client connected ", newAddr
                         self.__broadcastClientMsg(newClient, "new client connected \n")
                         self.messageList[newClient] = []
@@ -129,13 +140,13 @@ class ServerEnd:
                                 print "failed to receive data", err
                                 self.__closeDeadClient(sock)
                             else:
-                                self.messageList[sock].append(recvedData)
-                                if recvedData == "CLIENT_SHUTDOWN" or recvedData == '':
+                                if recvedData == "CLIENT_SHUTDOWN" or (not recvedData):
                                     self.__broadcastClientMsg(sock, "client disconnected \n")
                                     self.__closeDeadClient(sock)
-                                if recvedData == "PyHB":
-                                    pass
+                                elif recvedData == "****pyHB****":
+                                    self.clientManagement[sock].updateOnlineStatus()
                                 else:
+                                    self.messageList[sock].append(recvedData)
                                     print 'msg from :', str(sock.getpeername()), recvedData
                                     self.__broadcastClientMsg(sock, recvedData)
 
@@ -156,13 +167,16 @@ class ServerEnd:
                     self.__closeServer()
                     break
 
+        except select.error as e:
+            print 'Select error', e
+
         except Exception as e:
             # choose exception type
-            print 'Exception', e
+            print 'Find Exception', e
             self.__closeServer()
 
         except KeyboardInterrupt:
-            print 'KeyboardInterrupt'
+            print 'Find KeyboardInterrupt'
             self.__closeServer()
 
         finally:
@@ -190,7 +204,6 @@ class ServerEnd:
         TCP_KEEPALIVE = 0x10
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, interval_sec)
-
 
 if __name__ == "__main__":
 
