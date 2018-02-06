@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 
+import json
 import select
 import sys
 import threading
-import json
 
 from ClientInfo import *
 from SocketWrapper import *
@@ -18,6 +18,10 @@ class ServerEnd:
     RECV_BUFFER = 4096
 
     sockCollections = []
+
+    __usrLoginData = {}
+    __usrLoginStatus = {}
+    __usrnameIPAddrAssociation = {}
 
     messageList = {}
 
@@ -34,6 +38,8 @@ class ServerEnd:
         self.messageList = {}
         self.host = '127.0.0.1'  # socket.gethostname()
 
+        self.__loadUsrData()
+
         self.clientManagementLock = threading.Lock()
         self.hbThread = threading.Thread(target=self.__detectClientStatus)
         self.hbThread.setDaemon(True)
@@ -49,18 +55,13 @@ class ServerEnd:
 
     def __broadcastClientMsg(self, msgSock, msg):
 
-        sockAddr = msgSock.getpeername()[0]
-        sockPort = str(msgSock.getpeername()[1])
-
         # send msg to all clients except for msgSock and serverSock
         for sock in self.sockCollections:
             try:
                 if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
-                    socketSend(sock, sockAddr + ", "+ sockPort + ": "+ msg)
-            except:
-                sock.close()
-                self.sockCollections.remove(sock)
-                #print "client socket", str(sock.getpeername()), "is closed"
+                    socketSend(sock, self.__getUsrName(sock) + ": " + msg)
+            except socket.error:
+                self.__closeDeadClient(sock)
 
     def __broadcastServerMsg(self, msg):
 
@@ -68,9 +69,8 @@ class ServerEnd:
             try:
                 if sock != self.serverSock and type(sock) == socket._socketobject:
                     socketSend(sock, 'server msg: ' + msg)
-            except:
-                sock.close()
-                self.sockCollections.remove(sock)
+            except socket.error:
+                self.__closeDeadClient(sock)
 
     def __initSocket(self):
         self.serverSock = socketCreation()
@@ -90,9 +90,10 @@ class ServerEnd:
     def __closeDeadClient(self, sock):
         print "client disconnected", str(sock.getpeername())
         #self.clientManagementLock.acquire()
-        sock.close()
+        self.__usrLoginStatus[self.__getUsrName(sock)] = False
         self.clientManagement.__delitem__(sock)
         self.sockCollections.remove(sock)
+        sock.close()
         #self.clientManagementLock.release()
 
     def __detectClientStatus(self):
@@ -109,14 +110,87 @@ class ServerEnd:
 
     def __processRecvedData(self, sock, recvedData):
         if (not recvedData) or recvedData == "CLIENT_SHUTDOWN":
-            self.__broadcastClientMsg(sock, "client disconnected \n")
+            self.__broadcastClientMsg(sock, "client disconnected\n")
             self.__closeDeadClient(sock)
         elif recvedData == "-^-^-pyHB-^-^-":
             self.clientManagement[sock].updateOnlineStatus()
         else:
-            self.messageList[sock].append(recvedData)
-            print 'msg from :', str(sock.getpeername()), recvedData, json.loads(recvedData)
-            self.__broadcastClientMsg(sock, recvedData)
+
+            # parse recvedData
+            sysMsg = self.__parseRecvdData(sock, recvedData)
+            print sysMsg
+
+            # self.messageList[sock].append(recvedData)
+            print 'msg from :', self.__getUsrName(sock), sysMsg
+            self.__broadcastClientMsg(sock, sysMsg)
+
+    def __parseRecvdData(self, sock, msg):
+
+        try:
+            data = json.loads(msg)
+        except Exception as e:
+            print 'excepetion in json', e
+        else:
+            if type(data) == dict:
+                for k, v in data.items():
+                    if k == 'LoginRequest' and type(v) == dict:
+                        usrName = v.keys()[0]
+                        usrPwd = v.values()[0]
+                        return self.__usrLogin(sock, usrName, usrPwd)
+                    elif k == 'RegistRequest' and type(v) == dict:
+                        usrName = v.keys()[0]
+                        usrPwd = v.values()[0]
+                        return self.__registNewUsr(usrName, usrPwd)
+                    elif k == 'ChatConversation':
+                        return v
+
+    def __usrLogin(self, sock, usrName, usrPwd):
+
+        if not self.__usrLoginStatus.has_key(usrName):
+            print "account not exists"
+            return "AccountNotExists"
+
+        if self.__usrLoginStatus.has_key(usrName) and self.__usrLoginStatus[usrName] == True:
+            print "usr is already online"
+            return "UsrIsAlreadyOnline"
+
+        if self.__usrLoginData[usrName] == usrPwd:
+            self.__usrnameIPAddrAssociation[str(sock.getpeername())] = usrName
+            self.__usrLoginStatus[usrName] = True
+            return "SuccesfulLogin\n"
+        else:
+            return "InvalidLogin"
+
+    def __getUsrName(self, sock):
+        name = str(sock.getpeername())
+        if self.__usrnameIPAddrAssociation.has_key(name):
+            return self.__usrnameIPAddrAssociation[name]
+        else:
+            return str(name)
+
+    def __registNewUsr(self, usrName, usrPwd):
+
+        if self.__usrLoginData.has_key(usrName):
+            print "Account Already Registed"
+            return "AccountAlreadyRegisted"
+
+        self.__usrLoginData[usrName] = usrPwd
+
+        data = json.dumps(self.__usrLoginData)
+
+        f = open('usrdata.dat', 'w')
+        f.write(data.encode('utf-8'))
+        f.close()
+        return "SuccesfulRegistration"
+
+    def __loadUsrData(self):
+        f = open('usrdata.dat', 'r')
+        data = f.read().decode('utf-8')
+        self.__usrLoginData = json.loads(data)
+        f.close()
+
+        for k in self.__usrLoginData.keys():
+            self.__usrLoginStatus[k] = False
 
     def __acceptNewClient(self, sock):
         self.clientManagement[sock] = ClientInfo(sock)
@@ -134,16 +208,13 @@ class ServerEnd:
 
         try:
             while not quitProgram:
-                #print 'selecting', self.sockCollections
                 readList, writeList, errorList = select.select(self.sockCollections, [], self.sockCollections)
-
 
                 for sock in readList:
 
                     if sock == self.serverSock:
                         # new client
                         newClient, newAddr = socketAccept(sock)
-                        #self.set_keepalive_osx(newClient)
                         self.__acceptNewClient(newClient)
                     else:
                         if type(sock) == socket._socketobject:
@@ -185,29 +256,6 @@ class ServerEnd:
 
         finally:
             print "end of server program"
-            #print self.messageList
-
-    def set_keepalive_linux(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
-        """Set TCP keepalive on an open socket.
-
-        It activates after 1 second (after_idle_sec) of idleness,
-        then sends a keepalive ping once every 3 seconds (interval_sec),
-        and closes the connection after 5 failed ping (max_fails), or 15 seconds
-        """
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
-
-    def set_keepalive_osx(sock, after_idle_sec=1, interval_sec=3, max_fails=5):
-        """Set TCP keepalive on an open socket.
-
-        sends a keepalive ping once every 3 seconds (interval_sec)
-        """
-        # scraped from /usr/include, not exported by python's socket module
-        TCP_KEEPALIVE = 0x10
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, interval_sec)
 
 if __name__ == "__main__":
 

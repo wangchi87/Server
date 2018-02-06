@@ -1,6 +1,6 @@
 import time
 
-threshold = 1
+threshold = 1000
 
 class ClientInfo(dict):
     '''
