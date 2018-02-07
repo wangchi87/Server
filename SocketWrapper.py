@@ -39,18 +39,23 @@ def socketConnection(sock, host, port):
         return True
 
 def socketSend(sock, data):
-    print 'socket send data', data
-    # we add EOD as the segmentation of data stream
+    # print 'socket send data', data
+    # we add EOD(end of data) as the segmentation of data stream
     data += 'EOD'
+
     data.encode('utf-8')
     try:
         sock.sendall(data)
     except socket.error as err:
         print "failed to send data: ", err
+        return False
+    else:
+        return True
 
 def socketRecv(sock, recvBuffSize):
 
     data = ''
+
     while 1:
 
         buf = sock.recv(recvBuffSize)

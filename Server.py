@@ -17,6 +17,8 @@ class ServerEnd:
 
     RECV_BUFFER = 4096
 
+    # collection of all sockets,
+    # including server and client sockets
     sockCollections = []
 
     # store all usernames and passwords
@@ -37,8 +39,9 @@ class ServerEnd:
     __usrAliveStatus = {}
 
     # heart beat loop status and thread
-    hbLoop = True
-    hbThread = None
+    __subThreadAlive = True
+    __hbThread = None
+    __usrTimeThread = None
 
     def __init__(self):
         self.sockCollections = []
@@ -47,9 +50,13 @@ class ServerEnd:
 
         self.__loadUsrData()
 
-        self.hbThread = threading.Thread(target=self.__detectClientStatus)
-        self.hbThread.setDaemon(True)
-        self.hbThread.start()
+        self.__hbThread = threading.Thread(target=self.__detectClientStatus)
+        self.__hbThread.setDaemon(True)
+        self.__hbThread.start()
+
+        self.__usrTimeThread = threading.Thread(target=self.__updateClientOnlineDuration)
+        self.__usrTimeThread.setDaemon(True)
+        self.__usrTimeThread.start()
 
         self.__mainLoop()
 
@@ -60,21 +67,19 @@ class ServerEnd:
         self.port = port
 
     def __broadcastClientMsg(self, msgSock, msg):
-        # send msg to all clients except for msgSock and serverSock
+        '''
+        # send msg from msgSock to other clients
+        '''
+
         for sock in self.sockCollections:
-            try:
-                if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
-                    socketSend(sock, packageChatMsg(self.__getUsrName(msgSock) + ": " + msg))
-            except socket.error:
-                self.__closeDeadClient(sock)
+            if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
+                self.__safeSocketSend(sock, packageChatMsg(self.__getUsrName(msgSock) + ": " + msg))
 
     def __broadcastServerMsg(self, msg):
+        # send msg to all clients
         for sock in self.sockCollections:
-            try:
-                if sock != self.serverSock and type(sock) == socket._socketobject:
-                    socketSend(sock, packageChatMsg('server msg: ' + msg))
-            except socket.error:
-                self.__closeDeadClient(sock)
+            if sock != self.serverSock and type(sock) == socket._socketobject:
+                self.__safeSocketSend(sock, packageChatMsg('server msg: ' + msg))
 
     def __initSocket(self):
         self.serverSock = socketCreation()
@@ -87,14 +92,15 @@ class ServerEnd:
 
     def __closeServer(self):
         print "close server !!"
-        self.hbLoop = False
+        self.__subThreadAlive = False
         self.__broadcastServerMsg("SERVER_SHUTDOWN")
         self.serverSock.close()
 
     def __closeDeadClient(self, sock):
-        print "client disconnected", str(sock.getpeername())
+        print "client disconnected", self.__getUsrName(sock)
         self.__usrOnlineStatus[self.__getUsrName(sock)] = False
         self.__updateUsrOnlineTime(sock)
+        self.__usrAliveStatus[sock].clientLogOut()
         self.__usrAliveStatus.__delitem__(sock)
         self.sockCollections.remove(sock)
         sock.close()
@@ -102,13 +108,13 @@ class ServerEnd:
 
     def __updateUsrOnlineTime(self, sock):
         usrname = self.__getUsrName(sock)
-        self.__usrLoginData[usrname]['lastOnlineTime'] = self.__usrAliveStatus[sock].getLoginTimeStamp()
-        self.__usrLoginData[usrname]['allOnlineDuration'] += self.__usrAliveStatus[sock].getOnlineDuration()
-
+        if self.__usrAliveStatus[sock].hasLoggedIn():
+            self.__usrLoginData[usrname]['lastOnlineTime'] = self.__usrAliveStatus[sock].getLoginTimeStamp()
+            self.__usrLoginData[usrname]['totalOnlineDuration'] += self.__usrAliveStatus[sock].getOnlineDuration()
 
     def __detectClientStatus(self):
         print "start detecting client status"
-        while self.hbLoop:
+        while self.__subThreadAlive:
             time.sleep(2)
             for sock, client in self.__usrAliveStatus.items():
                 if client.isClientOffline():
@@ -116,6 +122,25 @@ class ServerEnd:
                     self.__closeDeadClient(sock)
         print 'end of client status detection'
 
+    def __updateClientOnlineDuration(self):
+        # update the online duration of each client every 10 seconds
+        while self.__subThreadAlive:
+            for sock in self.__usrAliveStatus.keys():
+                # send client online informaton
+                self.__sendClientOnlineDurationMsg(sock)
+            time.sleep(10)
+
+    def __sendClientOnlineDurationMsg(self, sock):
+        if self.__usrAliveStatus[sock].hasLoggedIn():
+            usrName = self.__getUsrName(sock)
+            lastOnlineTimeStr = datetime.datetime.fromtimestamp(
+                self.__usrLoginData[usrName]['lastOnlineTime']).strftime(
+                "%Y-%m-%d-%H-%M")
+            totalSeconds = self.__usrLoginData[usrName]['totalOnlineDuration'] + self.__usrAliveStatus[
+                sock].getOnlineDuration()
+            totalOnlintTimeStr = secondsToHMS(totalSeconds)
+            timeMsg = packageMsg("SysUsrOnlineDurationMsg", lastOnlineTimeStr + ";" + totalOnlintTimeStr)
+            self.__safeSocketSend(sock, timeMsg.encode('utf-8'))
 
     def __processRecvedData(self, sock, recvedData):
         '''
@@ -145,10 +170,18 @@ class ServerEnd:
             needServerReply, msg = self.__parseRecvdData(sock, recvedData)
 
             if needServerReply:
-                socketSend(sock, msg)
+                self.__safeSocketSend(sock, msg)
+                if msg == '''{"SysLoginAck": "Successful login"}''':
+                    self.__sendClientOnlineDurationMsg(sock)
+                    time.sleep(0.1)
+                    self.__broadcastServerMsg(self.__getUsrName(sock) + 'is online')
             else:
                 print 'msg from :', self.__getUsrName(sock), msg
                 self.__broadcastClientMsg(sock, msg)
+
+    def __safeSocketSend(self, sock, msg):
+        if not socketSend(sock, msg):
+            self.__closeDeadClient(sock)
 
     def __parseRecvdData(self, sock, msg):
         '''
@@ -168,12 +201,12 @@ class ServerEnd:
         :return: (a, b) a is True or False, which means whether the server needs to reply to client or not
                         b is the message that the function returned
         '''
-
+        data = ''
         try:
             data = json.loads(msg)
         except Exception as e:
-            print 'exception in loading json data', e
-        else:
+            print 'exception in loading json data: ', e, '**', data, '**'
+        finally:
             if type(data) == dict:
                 for k, v in data.items():
                     if k == 'SysLoginRequest' and type(v) == dict:
@@ -217,7 +250,7 @@ class ServerEnd:
             print "Account Already Registered"
             return packageMsg('SysRegisterAck', "Account has already been registered")
 
-        self.__usrLoginData[usrName] = {'pwd': usrPwd, 'lastOnlineTime': 0.0, 'allOnlineDuration': 0.0}
+        self.__usrLoginData[usrName] = {'pwd': usrPwd, 'lastOnlineTime': time.time(), 'totalOnlineDuration': 0.0}
 
         self.__dumpUsrData()
         return packageMsg('SysRegisterAck', "Successful registration")
@@ -247,7 +280,7 @@ class ServerEnd:
         self.__usrAliveStatus[sock] = ClientOnlineTimeInfo()
         self.sockCollections.append(sock)
         print "new client connected ", sock.getpeername()
-        self.__broadcastClientMsg(sock, "new client connected \n")
+        # self.__broadcastClientMsg(sock, "new client connected \n")
 
     def __mainLoop(self):
 
