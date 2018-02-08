@@ -39,10 +39,13 @@ def socketConnection(sock, host, port):
         return True
 
 def socketSend(sock, data):
+    '''
+    :return: we return a boolean type of data to indicate whether there is
+    an expection when sending the data
+    '''
     # print 'socket send data', data
     # we add EOD(end of data) as the segmentation of data stream
     data += 'EOD'
-
     data.encode('utf-8')
     try:
         sock.sendall(data)
@@ -53,7 +56,7 @@ def socketSend(sock, data):
         return True
 
 def socketRecv(sock, recvBuffSize):
-
+    ''' socket recv except of this method is caught outside '''
     data = ''
 
     while 1:
