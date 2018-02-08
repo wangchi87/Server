@@ -26,5 +26,6 @@ def secondsToHMS(seconds):
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
 
-    timeStr = str("%02dh-%02dm-%02ds" % (h, m, s))
+    # timeStr = str("%02dh-%02dm-%02ds" % (h, m, s))
+    timeStr = str("%02dh-%02dm" % (h, m))
     return timeStr

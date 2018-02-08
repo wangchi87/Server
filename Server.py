@@ -131,13 +131,13 @@ class ServerEnd:
 
     def __updateOnlineClientsStatus(self):
         '''
-        update the online duration information of each client every 10 seconds
+        update the online duration information of each client every 60 seconds
         '''
         while self.__subThreadAlive:
             for sock in self.__usrAliveStatus.keys():
                 # send client online informaton
                 self.__sendClientOnlineDurationMsg(sock)
-            time.sleep(1)
+            time.sleep(60)
 
     def __sendClientOnlineDurationMsg(self, sock):
         if self.__usrAliveStatus[sock].hasLoggedIn():
@@ -188,7 +188,8 @@ class ServerEnd:
 
             if needServerReply:
                 self.__safeSocketSend(sock, msg)
-                if msg == '''{"SysLoginAck": "Successful login"}''':
+                if msg == '''{"SysMsg": {"SysLoginAck": "Successful login"}}''':
+                    # print msg
                     self.__sendClientOnlineDurationMsg(sock)
                     # time.sleep(0.1)
                     # self.__broadcastServerMsg(self.__getUsrName(sock) + ' is online\n')
@@ -211,6 +212,19 @@ class ServerEnd:
         2. the message that server do NOT have to reply, that is usually
             a CHAT message that the server needs to broadcast to other client
 
+        the protocol of msg we used here are as following:
+        all the message are packed in a dict structure:
+
+        message can be attributed as system message or chat message, which leads to the dict structure:
+        1. {'SysMsg': {a:b}}:
+            a field are used to identify the types of system msg, for instance: "SysLoginRequest"
+            b field are usually the real msg that we want to send, it could be a str or dict, according to the type of a field
+        2. {'ChatMsg': {a:b}}:
+            a field here is to identify to whom the chat msg is to send:
+                'toAll' means: we want to broadcast the msg
+                if a field is a user name, it means we want to send msg privately
+            b field is the msg we want to send
+
         :param sock: the socket from which we get msg
         :param msg: received message
         :return: (a, b) a is True or False, which means whether the server needs to reply to client or not
@@ -224,30 +238,20 @@ class ServerEnd:
         finally:
             if type(data) == dict:
                 for k, v in data.items():
-                    if k == 'SysLoginRequest' and type(v) == dict:
-                        usrName = v.keys()[0]
-                        usrPwd = v.values()[0]
-                        return True, self.__usrLogin(sock, usrName, usrPwd)
-                    elif k == 'SysRegisterRequest' and type(v) == dict:
-                        usrName = v.keys()[0]
-                        usrPwd = v.values()[0]
-                        return True, self.__registNewUsr(usrName, usrPwd)
-                    elif k == "SysAllOnlineClientsRequest":
-                        return True, self.__replyAllOnlineUsrnames()
-                    elif k == 'ChatMsg':
+                    if k == 'ChatMsg':
                         # v will be a dict {'toAll': msg} or {'XXX': msg}
                         return False, v
                     elif k == 'SysMsg':
                         # v will be a dict, {'SysLoginRequest': {}} or {'SysRegisterRequest': {}}
                         for i, j in v.items():
                             if i == 'SysLoginRequest':
-                                # v : {'SysLoginRequest': {usrname:usrpwd}}
+                                # case: {'SysLoginRequest': {usrname:usrpwd}}
                                 usrName = j.keys()[0]
                                 usrPwd = j.values()[0]
                                 return True, self.__usrLogin(sock, usrName, usrPwd)
 
                             if i == 'SysRegisterRequest':
-                                # v : {'SysRegisterRequest': {usrname:usrpwd}}
+                                # case: {'SysRegisterRequest': {usrname:usrpwd}}
                                 usrName = j.keys()[0]
                                 usrPwd = j.values()[0]
                                 return True, self.__registNewUsr(usrName, usrPwd)
