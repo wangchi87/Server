@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import time
-import datetime
 
-threshold = 10
+threshold = 1000
 
 class ClientOnlineTimeInfo:
     '''
@@ -61,7 +60,7 @@ class ClientOnlineTimeInfo:
 
 
 if __name__ == '__main__':
-    ci = ClientInfo()
+    ci = ClientOnlineTimeInfoInfo()
 
     time.sleep(2.1)
 

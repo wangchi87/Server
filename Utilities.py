@@ -11,7 +11,8 @@ def packageSysMsg(key, msg):
     rtnStr['SysMsg'] = {key: msg}
     return json.dumps(rtnStr)
 
-def packageChatMsg(msg):
+
+def packagePublicChatMsg(msg):
     rtnStr = {}
     rtnStr['ChatMsg'] = {'toAll': msg}
     return json.dumps(rtnStr)
