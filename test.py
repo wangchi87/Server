@@ -2,38 +2,30 @@
 
 import threading
 import time
+from Tkinter import *
 
-s = ''
 
-l = threading.Lock()
+def newWindow():
+    root = Tk()
+    root.mainloop()
+
 
 
 def a():
-    global s
+    count = 0
+    while count < 10:
 
-    for z in 'abcdefg':
-        time.sleep(0.01)
-        l.acquire()
-        s += z
-        l.release()
+        if count == 5:
+            print 'count is 5'
+            s = threading.Thread(target=newWindow)
+            s.setDaemon(True)
+            s.start()
 
-
-def b():
-    global s
-
-    for z in 'opqrst':
-        time.sleep(0.01)
-        s += z
+        print count
+        count += 1
+    time.sleep(5)
 
 
-t1 = threading.Thread(target=a)
-
-t2 = threading.Thread(target=b)
-
-t1.start()
-
-t2.start()
-
-time.sleep(0.1)
-
-print s
+q = threading.Thread(target=a)
+q.setDaemon(True)
+q.start()

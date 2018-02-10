@@ -2,7 +2,7 @@
 
 import time
 
-threshold = 1000
+threshold = 2
 
 class ClientOnlineTimeInfo:
     '''
