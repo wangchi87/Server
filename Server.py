@@ -55,7 +55,8 @@ class ServerEnd:
 
     def __init__(self):
         self.__sockCollections = []
-        self.host = '127.0.0.1'  # socket.gethostname()
+        self.host = socket.gethostname()
+        # self.host = '127.0.0.1'  # socket.gethostname()
 
         self.__loadUsrData()
 
