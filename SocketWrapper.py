@@ -2,6 +2,7 @@
 import socket
 import struct
 
+
 def socketCreation():
     try:
         sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -72,7 +73,7 @@ def socketSend(sock, data):
     try:
         sock.sendall(data)
     except socket.error as err:
-        print "failed to send data: ", err
+        print sock, "failed to send data: ", err
         return False
     else:
         return True

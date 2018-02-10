@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
+import datetime
 import select
 import sys
 import threading
 
-from ClientOnlineTimeInfo import *
+from ClientStatus import *
 from SocketWrapper import *
 from Utilities import *
 
@@ -20,6 +21,7 @@ class ServerEnd:
     # collection of all sockets,
     # including server and client sockets
     __sockCollections = []
+    __sockLock = None
 
     # store all usernames and passwords
     # the KEY is username, the VALUE is a dict which has three fields:
@@ -29,9 +31,9 @@ class ServerEnd:
     __usrLoginData = {}
 
     # record whether user has logged in or not
-    # this is not the same with whether the socket is connected or not
+    # this is NOT the same with the status of socket
     # the KEY is username, the VALUE is True or False
-    __usrLoginStatus = {}
+    __usrLogInOrOut = {}
 
     # associate username and socket
     # the KEY is a socket, the VALUE is corresponding username
@@ -39,7 +41,8 @@ class ServerEnd:
 
     # we apply a dict to manage the status of client sock
     # detecting the status of connected sock
-    # the KEY is a socket, the VALUE is an object of ClientOnlineTimeInfo
+    # the KEY is a socket, the VALUE is an object of ClientStatus
+    # ClientStatus is created since the client is connected, not when logging
     __usrStatusManage = {}
 
     # we have two sub thread:
@@ -55,6 +58,7 @@ class ServerEnd:
 
     def __init__(self):
         self.__sockCollections = []
+        self.__sockLock = threading.Lock()
         self.host = socket.gethostname()
         # self.host = '127.0.0.1'  # socket.gethostname()
 
@@ -93,29 +97,60 @@ class ServerEnd:
         self.serverSock.close()
 
     def __acceptNewClient(self, sock):
-        self.__usrStatusManage[sock] = ClientOnlineTimeInfo()
+        self.__usrStatusManage[sock] = ClientStatus()
         self.__sockCollections.append(sock)
         print "new client connected ", self.__getUsrName(sock)
         # self.__broadcastServerSysMsg("UsrLogin", self.__getUsrName(sock))
 
     def __closeDeadClient(self, sock):
-        print "client disconnected", self.__getUsrName(sock)
-        self.__broadcastServerSysMsg('SysUsrLogOut', self.__getUsrName(sock))
-        self.__usrLoginStatus[self.__getUsrName(sock)] = False
+        self.__sockLock.acquire()
+
+        # print "sock to close:", sock
+        # print "sock list", self.__sockCollections
+
+        usrName = self.__getUsrName(sock)
+        print "client disconnected", usrName
+
+        if self.__usrLogInOrOut.has_key(usrName):
+            self.__usrLogInOrOut[usrName] = False
+
         self.__updateUsrOnlineTime(sock)
-        self.__usrStatusManage[sock].clientLogOut()
-        self.__usrStatusManage.__delitem__(sock)
-        self.__sockCollections.remove(sock)
+
+        if self.__usrStatusManage.has_key(sock):
+            self.__usrStatusManage[sock].clientLogOut()
+            self.__usrStatusManage.__delitem__(sock)
+
+        if self.__usrnameSocketAssociation.has_key(sock):
+            self.__usrnameSocketAssociation.__delitem__(sock)
+
+        if sock in self.__sockCollections:
+            self.__sockCollections.remove(sock)
+
         sock.close()
         self.__dumpUsrData()
+        self.__sockLock.release()
 
     def __safeSocketSend(self, sock, msg):
-        if not socketSend(sock, msg):
-            self.__closeDeadClient(sock)
+        # TODO: check sock is alive!
+        if self.__checkSocketAlive(sock):
+            if not socketSend(sock, msg):
+                traceback.print_exc()
+                self.__closeDeadClient(sock)
+
+    def __checkSocketAlive(self, sock):
+        try:
+            sock.sendall('*')
+        except socket.error as e:
+            print sock, 'is down', e
+            return False
+        else:
+            return True
+
+    # ************************* broadcast usr or system msg methods **************************
 
     def __broadcastClientChatMsg(self, msgSock, msg):
         '''
-        send msg from msgSock to other clients
+        send chat msg from msgSock to other clients
         '''
         for sock in self.__sockCollections:
             if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
@@ -138,6 +173,15 @@ class ServerEnd:
             if sock != self.serverSock and type(sock) == socket._socketobject:
                 self.__safeSocketSend(sock, packageSysMsg(key, msg))
 
+    def __broadcastClientSysMsg(self, msgSock, key, msg):
+        '''
+        send msg from msgSock to other clients, if client want to broadcast a SYSTEM LEVEL msg
+        for example, one client declaims that he is logging out
+        '''
+        for sock in self.__sockCollections:
+            if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
+                self.__safeSocketSend(sock, packageSysMsg(key, msg))
+
     # ************************* two sub-thread methods **************************
     def __detectClientStatus(self):
         '''
@@ -149,6 +193,8 @@ class ServerEnd:
             for sock, client in self.__usrStatusManage.items():
                 if client.isClientOffline():
                     print sock, "is OFFLINE"
+                    # self.__broadcastServerSysMsg('SysUsrLogOut', self.__getUsrName(sock))
+                    # self.__usrStatusManage.__delitem__(sock)
                     self.__closeDeadClient(sock)
         print 'end of client status detection'
 
@@ -203,9 +249,14 @@ class ServerEnd:
         :param recvedData: received data
 
         '''
+        # print "Received command", recvedData
         if (not recvedData) or recvedData == "CLIENT_SHUTDOWN":
-            self.__broadcastClientChatMsg(sock, "client disconnected\n")
-            self.__closeDeadClient(sock)
+            try:
+                self.__broadcastClientSysMsg(sock, 'SysUsrLogOut', self.__getUsrName(sock))
+                self.__broadcastClientChatMsg(sock, "client disconnected\n")
+                self.__closeDeadClient(sock)
+            except Exception as e:
+                print e
         elif recvedData == "-^-^-pyHB-^-^-":
             self.__usrStatusManage[sock].updateOnlineStatus()
         else:
@@ -306,7 +357,7 @@ class ServerEnd:
             usrname = []
             repliedStr = {"allOnlineUsernames": usrname}
 
-            for k, v in self.__usrLoginStatus.items():
+            for k, v in self.__usrLogInOrOut.items():
                 if v == True:
                     repliedStr['allOnlineUsernames'].append(k)
 
@@ -324,15 +375,15 @@ class ServerEnd:
             print "account not exists"
             return packageSysMsg('SysLoginAck', "Account Not exists")
 
-        if self.__usrLoginStatus.has_key(usrName) and self.__usrLoginStatus[usrName] == True:
+        if self.__usrLogInOrOut.has_key(usrName) and self.__usrLogInOrOut[usrName] == True:
             print "usr is already online"
             return packageSysMsg('SysLoginAck', "This User is already online")
 
         if self.__usrLoginData[usrName]['pwd'] == usrPwd:
             self.__usrnameSocketAssociation[sock] = usrName
-            self.__usrLoginStatus[usrName] = True
+            self.__usrLogInOrOut[usrName] = True
             self.__usrStatusManage[sock].clientLogin()
-            self.__broadcastServerSysMsg("SysUsrLogin", usrName)
+            self.__broadcastClientSysMsg(sock, "SysUsrLogin", usrName)
             return packageSysMsg('SysLoginAck', "Successful login")
         else:
             return packageSysMsg('SysLoginAck', "Invalid login")
@@ -354,7 +405,12 @@ class ServerEnd:
         if self.__usrnameSocketAssociation.has_key(sock):
             return self.__usrnameSocketAssociation[sock]
         else:
-            return str(sock.getpeername())
+            try:
+                name = str(sock.getpeername())
+            except BaseException:
+                return ''
+            else:
+                return name
 
     def __dumpUsrData(self):
         data = json.dumps(self.__usrLoginData)
@@ -369,13 +425,16 @@ class ServerEnd:
         try:
             f = open('usrdata.dat', 'r')
             data = f.read().decode('utf-8')
-            self.__usrLoginData = json.loads(data)
+            if data:
+                self.__usrLoginData = json.loads(data)
+            else:
+                print "invalid usrdata.dat"
             f.close()
         except IOError as e:
             print "Could not open or find 'usrdata.dat' file"
         else:
             for k in self.__usrLoginData.keys():
-                self.__usrLoginStatus[k] = False
+                self.__usrLogInOrOut[k] = False
 
     # ***************************** main loop of server program *********************
     def __mainLoop(self):
@@ -398,6 +457,7 @@ class ServerEnd:
                             try:
                                 recvedData = socketRecv(sock, self.RECV_BUFFER)
                             except socket.error as err:
+                                print "failed to receive data, close invalid socket, then"
                                 self.__closeDeadClient(sock)
                             else:
                                 self.__processRecvedData(sock, recvedData)
