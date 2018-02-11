@@ -12,17 +12,17 @@ def packageSysMsg(key, msg):
     return json.dumps(rtnStr)
 
 
-def packagePublicChatMsg(msg):
+def packagePublicChatMsg(sender, msg):
     rtnStr = {}
-    rtnStr['ChatMsg'] = {'toAll': msg}
+    rtnStr['ChatMsg'] = {'toAll': [sender, msg]}
     return json.dumps(rtnStr)
 
 
-def packagePrivateChatMsg(usrname, msg):
+def packagePrivateChatMsg(sender, receiver, msg):
     # at server end, usrname indicates the name of receiver.
     # at cliend end, usrname indicates the name of sender
     rtnStr = {}
-    rtnStr['ChatMsg'] = {usrname: msg}
+    rtnStr['ChatMsg'] = {'toClient': [sender, receiver, msg]}
     return json.dumps(rtnStr)
 
 def secondsToHMS(seconds):

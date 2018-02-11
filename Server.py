@@ -18,8 +18,7 @@ class ServerEnd:
 
     RECV_BUFFER = 4096
 
-    # collection of all sockets,
-    # including server and client sockets
+    # collection of all client sockets
     __sockCollections = []
     __sockLock = None
 
@@ -87,20 +86,19 @@ class ServerEnd:
         self.serverSock.setblocking(False)
         socketListen(self.serverSock)
 
-        self.__sockCollections.append(self.serverSock)
-        self.__sockCollections.append(sys.stdin)
+        # self.__sockCollections.append(self.serverSock)
+        # self.__sockCollections.append(sys.stdin)
 
     def __closeServer(self):
         print "close server !!"
         self.__subThreadAlive = False
-        self.__broadcastServerSysMsg("SERVER_SHUTDOWN", '')
+        self.__broadcastServerSysMsg(self.__sockCollections, "SERVER_SHUTDOWN", '')
         self.serverSock.close()
 
     def __acceptNewClient(self, sock):
         self.__usrStatusManage[sock] = ClientStatus()
         self.__sockCollections.append(sock)
         print "new client connected ", self.__getUsrName(sock)
-        # self.__broadcastServerSysMsg("UsrLogin", self.__getUsrName(sock))
 
     def __closeDeadClient(self, sock):
         self.__sockLock.acquire()
@@ -148,37 +146,38 @@ class ServerEnd:
 
     # ************************* broadcast usr or system msg methods **************************
 
-    def __broadcastClientChatMsg(self, msgSock, msg):
+    def __broadcastServerSysMsg(self, group, key, msg):
         '''
-        send chat msg from msgSock to other clients
-        '''
-        for sock in self.__sockCollections:
-            if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
-                self.__safeSocketSend(sock, packagePublicChatMsg(self.__getUsrName(msgSock) + ": " + msg))
-
-    def __broadcastServerChatMsg(self, msg):
-        # send server msg to all clients
-        for sock in self.__sockCollections:
-            if sock != self.serverSock and type(sock) == socket._socketobject:
-                self.__safeSocketSend(sock, packagePublicChatMsg('server msg: ' + msg))
-
-    def __broadcastServerSysMsg(self, key, msg):
-        '''
-        send server system msg to all clients
+        send server system msg to all clients in group
+        :param group: all the sockets
         :param key: key is the type of system msg, for example "SysLoginRequestAck"
         :param msg: msg we want to send
         :return:
         '''
-        for sock in self.__sockCollections:
+        for sock in group:
             if sock != self.serverSock and type(sock) == socket._socketobject:
                 self.__safeSocketSend(sock, packageSysMsg(key, msg))
 
-    def __broadcastClientSysMsg(self, msgSock, key, msg):
+    def __broadcastClientChatMsg(self, group, msgSock, msg):
+        '''
+        send chat msg from msgSock to other clients
+        '''
+        for sock in group:
+            if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
+                self.__safeSocketSend(sock, packagePublicChatMsg(self.__getUsrName(msgSock), msg))
+
+    def __broadcastServerChatMsg(self, group, msg):
+        # send server msg to all clients
+        for sock in group:
+            if sock != self.serverSock and type(sock) == socket._socketobject:
+                self.__safeSocketSend(sock, packagePublicChatMsg('Server msg', msg))
+
+    def __broadcastClientSysMsg(self, group, msgSock, key, msg):
         '''
         send msg from msgSock to other clients, if client want to broadcast a SYSTEM LEVEL msg
         for example, one client declaims that he is logging out
         '''
-        for sock in self.__sockCollections:
+        for sock in group:
             if sock != msgSock and sock != self.serverSock and type(sock) == socket._socketobject:
                 self.__safeSocketSend(sock, packageSysMsg(key, msg))
 
@@ -193,8 +192,6 @@ class ServerEnd:
             for sock, client in self.__usrStatusManage.items():
                 if client.isClientOffline():
                     print sock, "is OFFLINE"
-                    # self.__broadcastServerSysMsg('SysUsrLogOut', self.__getUsrName(sock))
-                    # self.__usrStatusManage.__delitem__(sock)
                     self.__closeDeadClient(sock)
         print 'end of client status detection'
 
@@ -231,7 +228,7 @@ class ServerEnd:
 
     # ********************** process client request *************************
 
-    def __processRecvedData(self, sock, recvedData):
+    def __analyseRecvedData(self, sock, recvedData):
         '''
         This method process the received data from socket
 
@@ -249,11 +246,11 @@ class ServerEnd:
         :param recvedData: received data
 
         '''
-        # print "Received command", recvedData
+        # print "Received raw data", recvedData
         if (not recvedData) or recvedData == "CLIENT_SHUTDOWN":
             try:
-                self.__broadcastClientSysMsg(sock, 'SysUsrLogOut', self.__getUsrName(sock))
-                self.__broadcastClientChatMsg(sock, "client disconnected\n")
+                self.__broadcastClientSysMsg(self.__sockCollections, sock, 'SysUsrLogOut', self.__getUsrName(sock))
+                self.__broadcastClientChatMsg(self.__sockCollections, sock, "client disconnected\n")
                 self.__closeDeadClient(sock)
             except Exception as e:
                 print e
@@ -261,36 +258,8 @@ class ServerEnd:
             self.__usrStatusManage[sock].updateOnlineStatus()
         else:
             # parse recvedData
-            needsReply, msg = self.__parseRecvdData(sock, recvedData)
+            self.__parseRecvdData(sock, recvedData)
 
-            if needsReply:
-                # process sys msg
-                self.__safeSocketSend(sock, msg)
-                if msg == '''{"SysMsg": {"SysLoginAck": "Successful login"}}''':
-                    self.__sendClientOnlineDurationMsg(sock)
-            else:
-                # process chat msg:
-                # msg will be like {'toAll':'abc'} or {'netease1':'abc'}
-                # k is username, v is msg text
-                for k, v in msg.items():
-                    if k == "toAll":
-                        # process BROADCAST chat msg
-                        print 'msg to all from :', self.__getUsrName(sock), v
-                        self.__broadcastClientChatMsg(sock, v)
-                    else:
-                        # process PRIVATE chat msg
-                        receiverSock = None
-                        # get the socket so which owns username k,
-                        for i, j in self.__usrnameSocketAssociation.items():
-                            # k is the one who will receive private msg
-                            if j == k:
-                                receiverSock = i
-                                break
-                        prvtMsg = packagePrivateChatMsg(self.__getUsrName(sock), v)
-                        # send private chat msg
-                        if receiverSock is not None:
-                            # print so, recvedData
-                            self.__safeSocketSend(receiverSock, prvtMsg)
 
     def __parseRecvdData(self, sock, msg):
         '''
@@ -314,7 +283,7 @@ class ServerEnd:
         2. {'ChatMsg': {a:b}}:
             a field here is to identify to whom the chat msg is to send:
                 'toAll' means: we want to broadcast the msg
-                if a field is a user name, it means we want to send msg privately
+                'toClient' means, it is a private msg
             b field is the msg we want to send
 
         :param sock: the socket from which we get msg
@@ -331,26 +300,67 @@ class ServerEnd:
             if type(data) == dict:
                 for k, v in data.items():
                     if k == 'ChatMsg':
-                        # v will be a dict {'toAll': msg} or {'XXX': msg}
-                        return False, v
+                        # v will be a dict {'toAll': [sender,msg]} or {'XXX': msg}
+                        self.__processChatMsg(sock, v, msg)
+
                     elif k == 'SysMsg':
-                        # v will be a dict, {'SysLoginRequest': {}} or {'SysRegisterRequest': {}}
-                        for i, j in v.items():
-                            if i == 'SysLoginRequest':
-                                # case: {'SysLoginRequest': {usrname:usrpwd}}
-                                usrName = j.keys()[0]
-                                usrPwd = j.values()[0]
-                                return True, self.__usrLogin(sock, usrName, usrPwd)
+                        self.__processSysMsg(sock, v)
 
-                            if i == 'SysRegisterRequest':
-                                # case: {'SysRegisterRequest': {usrname:usrpwd}}
-                                usrName = j.keys()[0]
-                                usrPwd = j.values()[0]
-                                return True, self.__registNewUsr(usrName, usrPwd)
+    def __processChatMsg(self, sock, msg, recvedData):
+        '''
+        process chat msg:
+        msg will be like {'toAll':[sender, 'abc']} or {'toClient':[sender, receiver,'abc']}
+        k is username, v is msg text
+        '''
+        for k, v in msg.items():
+            if k == "toAll":
+                sender = v[0]
+                recvMsg = v[1]
+                # process lobby chat msg
+                print 'msg to all from :', sender, recvMsg
+                self.__broadcastClientChatMsg(self.__sockCollections, sock, recvMsg)
+            elif k == 'toClient':
+                # process PRIVATE chat msg
+                # forward the raw received data to corresponding socket
+                receiver = v[1]
+                receiverSock = self.__getSockWithUserName(receiver)
+                # send private chat msg
+                if receiverSock is not None:
+                    # print receiverSock, recveddData
+                    self.__safeSocketSend(receiverSock, recvedData)
 
-                            if i == 'SysAllOnlineClientsRequest':
-                                # v : {'SysLoginRequest': {usrname:usrpwd}}
-                                return True, self.__replyAllOnlineUsrnames()
+    def __getSockWithUserName(self, usrName):
+        sock = None
+        for k, v in self.__usrnameSocketAssociation.items():
+            if v == usrName:
+                sock = k
+                break
+        return sock
+
+    def __processSysMsg(self, sock, msg):
+        # v will be a dict, {'SysLoginRequest': {}} or {'SysRegisterRequest': {}}
+        for k, v in msg.items():
+            if k == 'SysLoginRequest':
+                # case: {'SysLoginRequest': {usrname:usrpwd}}
+                usrName = v.keys()[0]
+                usrPwd = v.values()[0]
+                reply = self.__usrLogin(sock, usrName, usrPwd)
+                self.__safeSocketSend(sock, reply)
+
+                if reply == '''{"SysMsg": {"SysLoginAck": "Successful login"}}''':
+                    self.__sendClientOnlineDurationMsg(sock)
+
+            if k == 'SysRegisterRequest':
+                # case: {'SysRegisterRequest': {usrname:usrpwd}}
+                usrName = v.keys()[0]
+                usrPwd = v.values()[0]
+                reply = self.__registNewUsr(usrName, usrPwd)
+                self.__safeSocketSend(sock, reply)
+
+            if k == 'SysAllOnlineClientsRequest':
+                # case : {'SysAllOnlineClientsRequest': ''}
+                reply = self.__replyAllOnlineUsrnames()
+                self.__safeSocketSend(sock, reply)
 
     def __replyAllOnlineUsrnames(self):
         try:
@@ -383,7 +393,7 @@ class ServerEnd:
             self.__usrnameSocketAssociation[sock] = usrName
             self.__usrLogInOrOut[usrName] = True
             self.__usrStatusManage[sock].clientLogin()
-            self.__broadcastClientSysMsg(sock, "SysUsrLogin", usrName)
+            self.__broadcastClientSysMsg(self.__sockCollections, sock, "SysUsrLogin", usrName)
             return packageSysMsg('SysLoginAck', "Successful login")
         else:
             return packageSysMsg('SysLoginAck', "Invalid login")
@@ -444,7 +454,10 @@ class ServerEnd:
 
         try:
             while not quitProgram:
-                readList, writeList, errorList = select.select(self.__sockCollections, [], self.__sockCollections)
+
+                sockList = self.__sockCollections + [self.serverSock, sys.stdin]
+
+                readList, writeList, errorList = select.select(sockList, [], sockList)
 
                 for sock in readList:
                     if sock == self.serverSock:
@@ -460,14 +473,14 @@ class ServerEnd:
                                 print "failed to receive data, close invalid socket, then"
                                 self.__closeDeadClient(sock)
                             else:
-                                self.__processRecvedData(sock, recvedData)
+                                self.__analyseRecvedData(sock, recvedData)
 
                         if type(sock) == file:
                             msg = sys.stdin.readline()
                             if msg == 'esc\n' or msg == '':
                                 quitProgram = True
                             else:
-                                self.__broadcastServerChatMsg(msg)
+                                self.__broadcastServerChatMsg(self.__sockCollections, msg)
 
                 for sock in errorList:
                     self.__closeDeadClient(sock)
