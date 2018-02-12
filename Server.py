@@ -19,7 +19,7 @@ class ServerEnd:
     recv_buffer_size = 4096
 
     # collection of all client sockets
-    __sockets_collection = []
+    __client_sockets = []
     __sock_lock = None
 
     # store all user names and passwords
@@ -60,7 +60,7 @@ class ServerEnd:
     __room_list = {}
 
     def __init__(self):
-        self.__sockets_collection = []
+        self.__client_sockets = []
         self.__sock_lock = threading.Lock()
         self.host = socket.gethostname()
         # self.host = '127.0.0.1'  # socket.gethostname()
@@ -93,13 +93,14 @@ class ServerEnd:
     def __close_server(self):
         print "close server !!"
         self.__sub_thread_alive = False
-        self.__broadcast_server_sys_msg(self.__sockets_collection, "SERVER_SHUTDOWN", '')
+        self.__broadcast_server_sys_msg(self.__client_sockets, "SERVER_SHUTDOWN", '')
         self.server_socket.close()
 
     def __accept_new_client(self, sock):
         self.__usr_status[sock] = ClientStatus()
-        self.__sockets_collection.append(sock)
+        self.__client_sockets.append(sock)
         print "new client connected ", self.__get_user_name(sock)
+        # print "current sockets", self.__client_sockets
 
     def __close_dead_socket(self, sock):
         self.__sock_lock.acquire()
@@ -113,7 +114,7 @@ class ServerEnd:
         if self.__usr_logIn_or_logout.has_key(user_name):
             self.__usr_logIn_or_logout[user_name] = False
 
-        self.__delSockFromRoomList(sock)
+        self.__del_sock_from_room_list(sock)
         self.__update_user_online_time(sock)
 
         if self.__usr_status.has_key(sock):
@@ -123,14 +124,14 @@ class ServerEnd:
         if self.__socket_username_dict.has_key(sock):
             self.__socket_username_dict.__delitem__(sock)
 
-        if sock in self.__sockets_collection:
-            self.__sockets_collection.remove(sock)
+        if sock in self.__client_sockets:
+            self.__client_sockets.remove(sock)
 
         sock.close()
         self.__dump_user_data()
         self.__sock_lock.release()
 
-    def __delSockFromRoomList(self, sock):
+    def __del_sock_from_room_list(self, sock):
         '''delete socket in room sockets lists'''
 
         # __roomList = {
@@ -140,13 +141,9 @@ class ServerEnd:
         #                   {'admin':xx, 'sockets':[s1,s2,s3]}
         #           }
 
-        for room_name, roomInfo in self.__room_list.items():
-            sock_num = len(roomInfo['sockets'])
-
-            for i in range(0, sock_num):
-                if roomInfo['sockets'][i] == sock:
-                    self.__room_list[room_name]['sockets'].__delitem__(i)
-                    break
+        for room_name in self.__room_list.keys():
+            if sock in self.__room_list[room_name]['sockets']:
+                self.__room_list[room_name]['sockets'].remove(sock)
 
     def __safe_socket_send(self, sock, msg):
         if self.__check_socket_is_alive(sock):
@@ -219,11 +216,11 @@ class ServerEnd:
         while self.__sub_thread_alive:
             for sock in self.__usr_status.keys():
                 # send client online information
-                self.__sendClientOnlineDurationMsg(sock)
+                self.__send_client_online_duration_msg(sock)
             time.sleep(60)
 
-    def __sendClientOnlineDurationMsg(self, sock):
-        if self.__usr_status[sock].client_has_login_or_not():
+    def __send_client_online_duration_msg(self, sock):
+        if self.__usr_status[sock].client_has_login_or_not() and sock in self.__client_sockets:
             user_name = self.__get_user_name(sock)
             usr_data = self.__usr_database[user_name]
 
@@ -266,9 +263,10 @@ class ServerEnd:
         # print "Received raw data", received_data
         if (not received_data) or received_data == "CLIENT_SHUTDOWN":
             try:
-                self.__broadcast_client_sys_msg(self.__sockets_collection, sock, 'SysUsrLogOut',
+                print "client close", received_data
+                self.__broadcast_client_sys_msg(self.__client_sockets, sock, 'SysUsrLogOut',
                                                 self.__get_user_name(sock))
-                self.__broadcast_client_chat_msg(self.__sockets_collection, sock, "client disconnected\n")
+                self.__broadcast_client_chat_msg(self.__client_sockets, sock, "client disconnected\n")
                 self.__close_dead_socket(sock)
             except Exception as e:
                 print e
@@ -319,14 +317,15 @@ class ServerEnd:
         except Exception as e:
             print 'exception in loading json data: ', e
         finally:
+            print data
             if type(data) == dict:
-                for k, v in data.items():
-                    if k == 'ChatMsg':
-                        # v will be a dict {'toAll': [sender,msg]} or {'XXX': msg}
-                        self.__process_chat_msg(sock, v, msg)
+                for msg_type, msg_text in data.items():
+                    if msg_type == 'ChatMsg':
+                        # msg_text will be a dict {'toAll': [sender,msg]} or {'XXX': msg}
+                        self.__process_chat_msg(sock, msg_text, msg)
 
-                    elif k == 'SysMsg':
-                        self.__process_sys_msg(sock, v)
+                    elif msg_type == 'SysMsg':
+                        self.__process_sys_msg(sock, msg_text)
 
     def __process_chat_msg(self, sock, msg, received_data):
         '''
@@ -344,7 +343,7 @@ class ServerEnd:
                 recv_msg = msg_text[1]
                 # process lobby chat msg
                 # print 'msg to all from :', sender, recv_msg
-                self.__broadcast_client_chat_msg(self.__sockets_collection, sock, recv_msg)
+                self.__broadcast_client_chat_msg(self.__client_sockets, sock, recv_msg)
             elif msg_id == 'toClient':
                 # process PRIVATE chat msg
                 # forward the raw received data to corresponding socket
@@ -361,9 +360,11 @@ class ServerEnd:
                 room_sockets = self.__room_list[room_name]['sockets']
 
                 # print 'to room msg, sockets: ', room_sockets
-                for receiver_sock in room_sockets:
-                    if receiver_sock != sock:
-                        self.__safe_socket_send(receiver_sock, received_data)
+                if sock in room_sockets:
+                    for receiver_sock in room_sockets:
+                        if receiver_sock != sock:
+                            print receiver_sock, received_data
+                            self.__safe_socket_send(receiver_sock, received_data)
 
     def __get_sock_with_username(self, user_name):
         sock = None
@@ -376,42 +377,75 @@ class ServerEnd:
     def __process_sys_msg(self, sock, msg):
         # user will be a dict, {'SysLoginRequest': {}} or {'SysRegisterRequest': {}}
         for msg_id, msg_text in msg.items():
+
+            reply = ''
+
             if msg_id == 'SysLoginRequest':
                 # case: {'SysLoginRequest': {user_name:user_pwd}}
                 user_name = msg_text.keys()[0]
                 user_pwd = msg_text.values()[0]
                 reply = self.__usr_login(sock, user_name, user_pwd)
-                self.__safe_socket_send(sock, reply)
 
                 if reply == '''{"SysMsg": {"SysLoginAck": "Successful login"}}''':
-                    self.__sendClientOnlineDurationMsg(sock)
+                    self.__send_client_online_duration_msg(sock)
+
+            # confirm a login like what TCP does
+            if msg_id == 'SysLoginConfirmed':
+                user_name = msg_text
+                self.__confirm_login(sock, user_name)
+                continue
 
             if msg_id == 'SysRegisterRequest':
                 # case: {'SysRegisterRequest': {user_name:user_pwd}}
                 user_name = msg_text.keys()[0]
                 user_pwd = msg_text.values()[0]
                 reply = self.__register_new_user(user_name, user_pwd)
-                self.__safe_socket_send(sock, reply)
 
             if msg_id == 'SysAllOnlineClientsRequest':
                 # case : {'SysAllOnlineClientsRequest': ''}
                 reply = self.__reply_all_online_username()
-                self.__safe_socket_send(sock, reply)
 
             if msg_id == 'SysCreateRoomRequest':
                 # case : {'SysCreateRoomRequest': {"admin": "1", "roomName": "aaa"}}
                 reply = self.__create_room(sock, msg_text)
-                self.__safe_socket_send(sock, reply)
 
             if msg_id == 'SysEnterRoomRequest':
                 # case : {'SysEnterRoomRequest': {"roomName": "aaa"}}
                 reply = self.__enter_room(sock, msg_text)
-                self.__safe_socket_send(sock, reply)
 
             if msg_id == 'SysRoomListRequest':
                 # case : {'SysEnterRoomRequest': {"roomName": "aaa"}}
                 reply = self.__query_room_list()
+
+            if msg_id == 'SysExitRoomRequest':
+                reply = self.__client_exit_room(sock, msg_text)
+
+            if msg_id == 'SysRoomUserNameRequest':
+                pass
+
+            if reply:
                 self.__safe_socket_send(sock, reply)
+                print "sys reply:", reply
+
+    def __confirm_login(self, sock, user_name):
+        self.__socket_username_dict[sock] = user_name
+        self.__usr_logIn_or_logout[user_name] = True
+        self.__usr_status[sock].client_login()
+        self.__broadcast_client_sys_msg(self.__client_sockets, sock, "SysUsrLogin", user_name)
+
+    def __client_exit_room(self, sock, msg):
+
+        key = "SysExitRoomAck"
+        room_name = msg['roomName']
+
+        if sock in self.__room_list[room_name]['sockets']:
+            self.__room_list[room_name]['sockets'].remove(sock)
+            value = {room_name: "Exit Room"}
+        else:
+            value = {room_name: "Failed To Exit Room"}
+
+        return package_sys_msg(key, value)
+
 
     def __query_room_list(self):
         key = "SysRoomListAck"
@@ -467,15 +501,11 @@ class ServerEnd:
             print "account not exists"
             return package_sys_msg('SysLoginAck', "Account Not exists")
 
-        if self.__usr_logIn_or_logout.has_key(user_name) and self.__usr_logIn_or_logout[user_name] == True:
+        if user_name in self.__usr_logIn_or_logout and self.__usr_logIn_or_logout[user_name]:
             print "usr is already online"
             return package_sys_msg('SysLoginAck', "This User is already online")
 
         if self.__usr_database[user_name]['pwd'] == user_pwd:
-            self.__socket_username_dict[sock] = user_name
-            self.__usr_logIn_or_logout[user_name] = True
-            self.__usr_status[sock].client_login()
-            self.__broadcast_client_sys_msg(self.__sockets_collection, sock, "SysUsrLogin", user_name)
             return package_sys_msg('SysLoginAck', "Successful login")
         else:
             return package_sys_msg('SysLoginAck', "Invalid login")
@@ -537,7 +567,7 @@ class ServerEnd:
         try:
             while not quit_program:
 
-                sock_list = self.__sockets_collection + [self.server_socket, sys.stdin]
+                sock_list = self.__client_sockets + [self.server_socket, sys.stdin]
 
                 read_list, write_list, error_list = select.select(sock_list, [], sock_list)
 
@@ -562,7 +592,7 @@ class ServerEnd:
                             if msg == 'esc\n' or msg == '':
                                 quit_program = True
                             else:
-                                self.__broadcast_server_chat_msg(self.__sockets_collection, msg)
+                                self.__broadcast_server_chat_msg(self.__client_sockets, msg)
 
                 for sock in error_list:
                     self.__close_dead_socket(sock)

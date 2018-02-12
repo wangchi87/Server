@@ -55,7 +55,7 @@ def socket_send(sock, data):
     header_pack = struct.pack('!9sI', *head)
 
     data = header_pack + data.encode('utf-8')
-
+    # print data
     try:
         sock.sendall(data)
     except socket.error as err:
