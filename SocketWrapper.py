@@ -3,27 +3,30 @@ import socket
 import struct
 
 
-def socketCreation():
+def socket_creation():
     try:
-        sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as err:
         print "failed to create socket: ", err
     else:
         return sock
 
-def socketBind(sock, host, port):
+
+def socket_bind(sock, host, port):
     try:
-        sock.bind((host,port))
+        sock.bind((host, port))
     except socket.error as err:
         print "failed to bind address: ", err
 
-def socketListen(sock):
+
+def socket_listen(sock):
     try:
         sock.listen(5)
     except socket.error as err:
         print "failed to listen socket: ", err
 
-def socketAccept(sock):
+
+def socket_accept(sock):
     try:
         s, a = sock.accept()
     except socket.error as err:
@@ -31,7 +34,8 @@ def socketAccept(sock):
     else:
         return s, a
 
-def socketConnection(sock, host, port):
+
+def socket_connection(sock, host, port):
     try:
         sock.connect((host, port))
     except socket.error as err:
@@ -41,34 +45,16 @@ def socketConnection(sock, host, port):
         return True
 
 
-# def socketSend(sock, data):
-#     '''
-#     :return: we return a boolean type of data to indicate whether there is
-#     an expection when sending the data
-#     '''
-#     # print 'socket send data', data
-#     # we add EOD(end of data) as the segmentation of data stream
-#     data += 'EOD'
-#     data.encode('utf-8')
-#     try:
-#         sock.sendall(data)
-#     except socket.error as err:
-#         print "failed to send data: ", err
-#         return False
-#     else:
-#         return True
-
-def socketSend(sock, data):
+def socket_send(sock, data):
     '''
     :return: we return a boolean type of data to indicate whether there is
     an expection when sending the data
     '''
-    # print 'socket send data', data
     # we add a header for each msg, which contains the length of each data
     head = ['msgHeader', len(data)]
-    headPack = struct.pack('!9sI', *head)
+    header_pack = struct.pack('!9sI', *head)
 
-    data = headPack + data.encode('utf-8')
+    data = header_pack + data.encode('utf-8')
 
     try:
         sock.sendall(data)
@@ -79,16 +65,17 @@ def socketSend(sock, data):
         return True
 
 
-dataBuffer = ''
-headerSize = 13
+data_buffer = ''
+header_size = 13
 
-def socketRecv(sock, recvBuffSize):
+
+def socket_recv(sock, recv_buff_size):
     ''' socket recv except of this method is caught outside '''
-    global dataBuffer
+    global data_buffer
 
     while 1:
 
-        data = sock.recv(recvBuffSize)
+        data = sock.recv(recv_buff_size)
 
         # client never send ''!
         # this will happen only when the client is terminated unexpectedly
@@ -96,41 +83,21 @@ def socketRecv(sock, recvBuffSize):
             # print 'receive empty string!'
             return data
 
-        dataBuffer = dataBuffer + data
+        data_buffer = data_buffer + data
 
         while 1:
-            if len(dataBuffer) < headerSize:
+            if len(data_buffer) < header_size:
                 break
 
-            headPack = struct.unpack('!9sI', dataBuffer[:headerSize])
-            msgBodySize = headPack[1]
+            header_pack = struct.unpack('!9sI', data_buffer[:header_size])
+            msg_body_size = header_pack[1]
 
-            if len(dataBuffer) < headerSize + msgBodySize:
+            if len(data_buffer) < header_size + msg_body_size:
                 break
 
-            msg = dataBuffer[headerSize:headerSize + msgBodySize]
+            msg = data_buffer[header_size:header_size + msg_body_size]
 
-            dataBuffer = dataBuffer[headerSize + msgBodySize:]
+            data_buffer = data_buffer[header_size + msg_body_size:]
 
             return msg
 
-# def socketRecv(sock, recvBuffSize):
-#     ''' socket recv except of this method is caught outside '''
-#     data = ''
-#
-#     while 1:
-#
-#         buf = sock.recv(recvBuffSize)
-#         buf.decode('utf-8')
-#         data = data + buf
-#
-#         if data[-3:] == 'EOD':
-#              break
-#
-#         # client never send ''!
-#         # this will happen only when the client is terminated unexpectedly
-#         if not data:
-#             # print 'receive empty string!'
-#             return data
-#
-#     return data[:-3]

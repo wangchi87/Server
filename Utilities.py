@@ -1,35 +1,39 @@
 # -*- coding: utf-8 -*-
 import json
 
-def packageMsg(key, msg):
-    rtnStr = {}
-    rtnStr[key] = msg
-    return json.dumps(rtnStr)
 
-def packageSysMsg(key, msg):
-    rtnStr = {}
-    rtnStr['SysMsg'] = {key: msg}
-    return json.dumps(rtnStr)
+def package_msg(key, msg):
+    rtn_str = {}
+    rtn_str[key] = msg
+    return json.dumps(rtn_str)
 
 
-def packagePublicChatMsg(sender, msg):
-    rtnStr = {}
-    rtnStr['ChatMsg'] = {'toAll': [sender, msg]}
-    return json.dumps(rtnStr)
+def package_sys_msg(key, msg):
+    rtn_str = {}
+    rtn_str['SysMsg'] = {key: msg}
+    return json.dumps(rtn_str)
 
 
-def packagePrivateChatMsg(sender, receiver, msg):
-    # at server end, usrname indicates the name of receiver.
-    # at cliend end, usrname indicates the name of sender
-    rtnStr = {}
-    rtnStr['ChatMsg'] = {'toClient': [sender, receiver, msg]}
-    return json.dumps(rtnStr)
+def package_public_chat_msg(sender, msg):
+    rtn_str = {}
+    rtn_str['ChatMsg'] = {'toAll': [sender, msg]}
+    return json.dumps(rtn_str)
 
-def secondsToHMS(seconds):
 
+def package_private_chat_msg(sender, receiver, msg):
+    rtn_str = {}
+    rtn_str['ChatMsg'] = {'toClient': [sender, receiver, msg]}
+    return json.dumps(rtn_str)
+
+
+def convert_seconds_to_hms_fmt(seconds):
+    '''
+    convert seconds to day, hour, seconds format
+    :return: day, hour, seconds format in str
+    '''
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
 
-    # timeStr = str("%02dh-%02dm-%02ds" % (h, m, s))
-    timeStr = str("%02dh-%02dm" % (h, m))
-    return timeStr
+    # time_str = str("%02dh-%02dm-%02ds" % (h, m, s))
+    time_str = str("%02dh-%02dm" % (h, m))
+    return time_str
