@@ -202,7 +202,7 @@ class ServerEnd:
         detect heart beat signal from client
         '''
         while self.__sub_thread_alive:
-            time.sleep(2)
+            time.sleep(20)
             for sock, client in self.__usr_status.items():
                 if client.is_client_offline():
                     print sock, "is OFFLINE"
