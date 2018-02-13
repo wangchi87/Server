@@ -5,6 +5,7 @@ import select
 import sys
 import threading
 import traceback
+import socket_config
 
 from client_status import *
 from socket_wrapper import *
@@ -32,7 +33,7 @@ class ServerEnd:
     # record whether user has logged in or not
     # this is NOT the same with the status of socket
     # the KEY is username, the VALUE is True or False
-    __usr_logIn_or_logout = {}
+    __usr_login_or_logout = {}
 
     # associate username and socket
     # the KEY is a socket, the VALUE is corresponding username
@@ -62,7 +63,8 @@ class ServerEnd:
     def __init__(self):
         self.__client_sockets = []
         self.__sock_lock = threading.Lock()
-        self.host = socket.gethostname()
+        self.host = socket_config.host_name
+        self.port = socket_config.port
         # self.host = '127.0.0.1'  # socket.gethostname()
 
         self.__load_user_data()
@@ -111,8 +113,8 @@ class ServerEnd:
         user_name = self.__get_user_name(sock)
         print "client disconnected", user_name
 
-        if self.__usr_logIn_or_logout.has_key(user_name):
-            self.__usr_logIn_or_logout[user_name] = False
+        if self.__usr_login_or_logout.has_key(user_name):
+            self.__usr_login_or_logout[user_name] = False
 
         self.__del_sock_from_room_list(sock)
         self.__update_user_online_time(sock)
@@ -430,7 +432,7 @@ class ServerEnd:
 
     def __confirm_login(self, sock, user_name):
         self.__socket_username_dict[sock] = user_name
-        self.__usr_logIn_or_logout[user_name] = True
+        self.__usr_login_or_logout[user_name] = True
         self.__usr_status[sock].client_login()
         self.__broadcast_client_sys_msg(self.__client_sockets, sock, "SysUsrLogin", user_name)
 
@@ -484,7 +486,7 @@ class ServerEnd:
             user_name = []
             reply = {"allOnlineUsernames": user_name}
 
-            for user, status in self.__usr_logIn_or_logout.items():
+            for user, status in self.__usr_login_or_logout.items():
                 if status:
                     reply['allOnlineUsernames'].append(user)
 
@@ -502,7 +504,7 @@ class ServerEnd:
             # print "account not exists"
             return package_sys_msg('SysLoginAck', "Account Not exists")
 
-        if user_name in self.__usr_logIn_or_logout and self.__usr_logIn_or_logout[user_name]:
+        if user_name in self.__usr_login_or_logout and self.__usr_login_or_logout[user_name]:
             # print "usr is already online"
             return package_sys_msg('SysLoginAck', "This User is already online")
 
@@ -557,7 +559,7 @@ class ServerEnd:
             print "Could not open or find 'usrdata.dat' file"
         else:
             for k in self.__usr_database.keys():
-                self.__usr_logIn_or_logout[k] = False
+                self.__usr_login_or_logout[k] = False
 
     # ***************************** main loop of server program *********************
     def __main_loop(self):
@@ -567,9 +569,7 @@ class ServerEnd:
         try:
             while not quit_program:
 
-                sock_list = self.__client_sockets + [self.server_socket, sys.stdin]
-
-                # print "select sockets: ", self.__client_sockets
+                sock_list = self.__client_sockets + [self.server_socket]
 
                 try:
                     read_list, write_list, error_list = select.select(sock_list, [], sock_list)
