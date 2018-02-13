@@ -65,7 +65,6 @@ class ServerEnd:
         self.__sock_lock = threading.Lock()
         self.host = socket_config.host_name
         self.port = socket_config.port
-        # self.host = '127.0.0.1'  # socket.gethostname()
 
         self.__load_user_data()
 
@@ -107,23 +106,20 @@ class ServerEnd:
     def __close_dead_socket(self, sock):
         self.__sock_lock.acquire()
 
-        print "close socket:", sock
-        # print "sock list", self.__sockCollections
-
         user_name = self.__get_user_name(sock)
-        print "client disconnected", user_name
+        print "client ", user_name, " disconnected"
 
-        if self.__usr_login_or_logout.has_key(user_name):
+        if user_name in self.__usr_login_or_logout:
             self.__usr_login_or_logout[user_name] = False
 
         self.__del_sock_from_room_list(sock)
         self.__update_user_online_time(sock)
 
-        if self.__usr_status.has_key(sock):
+        if sock in self.__usr_status:
             self.__usr_status[sock].client_logout()
             self.__usr_status.__delitem__(sock)
 
-        if self.__socket_username_dict.has_key(sock):
+        if sock in self.__socket_username_dict:
             self.__socket_username_dict.__delitem__(sock)
 
         if sock in self.__client_sockets:
@@ -257,7 +253,7 @@ class ServerEnd:
             this message means the client is closed manually
         3. received_data == "-^-^-pyHB-^-^-"
             this is the heart beat message
-        4. other message needs to be parsed with self.__parseRecvdData() method
+        4. other message needs to be parsed with self.__parse_received_data() method
 
         :param sock: the socket from which we get the received data
         :param received_data: received data
@@ -266,7 +262,6 @@ class ServerEnd:
         # print "Received raw data", received_data
         if (not received_data) or received_data == "CLIENT_SHUTDOWN":
             try:
-                print "client close", received_data
                 self.__broadcast_client_sys_msg(self.__client_sockets, sock, 'SysUsrLogOut',
                                                 self.__get_user_name(sock))
                 self.__broadcast_client_chat_msg(self.__client_sockets, sock, "client disconnected\n")
@@ -285,12 +280,6 @@ class ServerEnd:
         We will firstly parse the received json data, and return
         the corresponding message
 
-        There are two types of message:
-        1. the message that server needs to make a reply, for example
-            the LOGIN and REGISTER request from client.
-        2. the message that server do NOT have to reply, that is usually
-            a CHAT message that the server needs to broadcast to other client
-
         the protocol of msg we used here are as following:
         all the message are packed in a dict structure:
 
@@ -303,16 +292,14 @@ class ServerEnd:
                 i.'toAll' means: we want to broadcast the msg
                 ii.'toClient' means, it is a private msg
                 iii.'toRoom' means: it is a room msg
-            b field is the msg we want to send:
+            b field contains the following things:
                 for ii and iii case, b field has three sub fields, [x,y,z]
                     x is the sender, y is receiver, z is the message
                 for i case, b field has two sub fields, [x,y]
                     x is the sender, y is the message
 
         :param sock: the socket from which we get msg
-        :param msg: received message
-        :return: (a, b) a is True or False, which means whether the server needs to reply to client or not
-                        b is the message that the function returned
+        :param msg: received raw message
         '''
 
         print "client msg: ", msg
@@ -371,16 +358,8 @@ class ServerEnd:
                             # print receiver_sock, received_data
                             self.__safe_socket_send(receiver_sock, received_data)
 
-    def __get_sock_with_username(self, user_name):
-        sock = None
-        for so, user in self.__socket_username_dict.items():
-            if user == user_name:
-                sock = so
-                break
-        return sock
-
     def __process_sys_msg(self, sock, msg):
-        # user will be a dict, {'SysLoginRequest': {}} or {'SysRegisterRequest': {}}
+        # msg will be a dict, like {'SysLoginRequest': {}} or {'SysRegisterRequest': {}}
         for msg_id, msg_text in msg.items():
 
             reply = ''
@@ -430,56 +409,13 @@ class ServerEnd:
                 self.__safe_socket_send(sock, reply)
                 print "sys reply : ", reply
 
-    def __confirm_login(self, sock, user_name):
-        self.__socket_username_dict[sock] = user_name
-        self.__usr_login_or_logout[user_name] = True
-        self.__usr_status[sock].client_login()
-        self.__broadcast_client_sys_msg(self.__client_sockets, sock, "SysUsrLogin", user_name)
-
-    def __client_exit_room(self, sock, msg):
-
-        key = "SysExitRoomAck"
-        room_name = msg['roomName']
-
-        if sock in self.__room_list[room_name]['sockets']:
-            self.__room_list[room_name]['sockets'].remove(sock)
-            value = {room_name: "Exit Room"}
-        else:
-            value = {room_name: "Failed To Exit Room"}
-
-        return package_sys_msg(key, value)
-
-
-    def __query_room_list(self):
-        key = "SysRoomListAck"
-        value = self.__room_list.keys()
-        return package_sys_msg(key, value)
-
-    def __create_room(self, sock, msg):
-        # msg is like {"admin": "1", "roomName": "aaa"}
-        reply = {}
-        if self.__room_list.has_key(msg['roomName']):
-            reply[msg['roomName']] = "Room already exists"
-            return package_sys_msg('SysCreateRoomAck', reply)
-
-        self.__room_list[msg['roomName']] = {'admin': msg['admin'], 'sockets': [sock]}
-
-        reply[msg['roomName']] = "Successful Room Creation"
-        return package_sys_msg('SysCreateRoomAck', reply)
-
-    def __enter_room(self, sock, msg):
-        # msg is like {"roomName": "aaa"}
-        reply = {}
-        if self.__room_list.has_key(msg['roomName']):
-            if sock not in self.__room_list[msg['roomName']]['sockets']:
-                self.__room_list[msg['roomName']]['sockets'].append(sock)
-                reply[msg['roomName']] = "Successfully Enter The Room"
-            else:
-                reply[msg['roomName']] = "Already In The Room"
-            return package_sys_msg('SysEnterRoomAck', reply)
-
-        reply[msg['roomName']] = "Room Not Exists"
-        return package_sys_msg('SysEnterRoomAck', reply)
+    def __get_sock_with_username(self, user_name):
+        sock = None
+        for so, user in self.__socket_username_dict.items():
+            if user == user_name:
+                sock = so
+                break
+        return sock
 
     def __reply_all_online_username(self):
         try:
@@ -494,13 +430,63 @@ class ServerEnd:
         except Exception as e:
             print "exception in replying all online username", e
 
+    # *********************** process room request ********************
+
+    def __create_room(self, sock, msg):
+        # msg is like {"admin": "1", "roomName": "aaa"}
+        reply = {}
+        room_name = msg['roomName']
+
+        if room_name in self.__room_list:
+            reply[room_name] = "Room already exists"
+            return package_sys_msg('SysCreateRoomAck', reply)
+
+        self.__room_list[room_name] = {'admin': msg['admin'], 'sockets': [sock]}
+
+        reply[room_name] = "Successful Room Creation"
+        return package_sys_msg('SysCreateRoomAck', reply)
+
+    def __enter_room(self, sock, msg):
+        # msg is like {"roomName": "aaa"}
+        reply = {}
+        room_name = msg['roomName']
+
+        if room_name in self.__room_list:
+            if sock not in self.__room_list[room_name]['sockets']:
+                self.__room_list[room_name]['sockets'].append(sock)
+                reply[room_name] = "Successfully Enter The Room"
+            else:
+                reply[room_name] = "Already In The Room"
+            return package_sys_msg('SysEnterRoomAck', reply)
+
+        reply[room_name] = "Room Not Exists"
+        return package_sys_msg('SysEnterRoomAck', reply)
+
+    def __client_exit_room(self, sock, msg):
+
+        key = "SysExitRoomAck"
+        room_name = msg['roomName']
+
+        if sock in self.__room_list[room_name]['sockets']:
+            self.__room_list[room_name]['sockets'].remove(sock)
+            value = {room_name: "Exit Room"}
+        else:
+            value = {room_name: "Failed To Exit Room"}
+
+        return package_sys_msg(key, value)
+
+    def __query_room_list(self):
+        key = "SysRoomListAck"
+        value = self.__room_list.keys()
+        return package_sys_msg(key, value)
+
     # *********************** user login and registration ********************
     def __usr_login(self, sock, user_name, user_pwd):
         '''
         process user login request
         and make a reply
         '''
-        if not self.__usr_database.has_key(user_name):
+        if user_name not in self.__usr_database:
             # print "account not exists"
             return package_sys_msg('SysLoginAck', "Account Not exists")
 
@@ -512,6 +498,12 @@ class ServerEnd:
             return package_sys_msg('SysLoginAck', "Successful login")
         else:
             return package_sys_msg('SysLoginAck', "Invalid login")
+
+    def __confirm_login(self, sock, user_name):
+        self.__socket_username_dict[sock] = user_name
+        self.__usr_login_or_logout[user_name] = True
+        self.__usr_status[sock].client_login()
+        self.__broadcast_client_sys_msg(self.__client_sockets, sock, "SysUsrLogin", user_name)
 
     def __register_new_user(self, user_name, user_pwd):
         '''
@@ -598,7 +590,6 @@ class ServerEnd:
                                     self.__analyse_received_data(sock, received_data)
 
                 except Exception as e:
-                    # choose exception type
                     print 'Find Exception', e
 
                 finally:
@@ -606,11 +597,11 @@ class ServerEnd:
                         self.__close_server()
                         break
 
-        except KeyboardInterrupt:
-            print 'Find KeyboardInterrupt'
-            self.__close_server()
+        except KeyboardInterrup as e:
+            print 'Find KeyboardInterrupt', e
 
         finally:
+            self.__close_server()
             print "end of server program"
 
 
