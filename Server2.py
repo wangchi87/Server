@@ -1,7 +1,8 @@
+import select
+import sys
 
-import select, sys
+from socket_wrapper import *
 
-from SocketWrapper import *
 
 class ServerEnd:
 

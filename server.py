@@ -6,9 +6,9 @@ import sys
 import threading
 import traceback
 
-from ClientStatus import *
-from SocketWrapper import *
-from Utilities import *
+from client_status import *
+from socket_wrapper import *
+from utils import *
 
 
 class ServerEnd:
@@ -317,7 +317,7 @@ class ServerEnd:
         except Exception as e:
             print 'exception in loading json data: ', e
         finally:
-            print data
+            print "client msg: ", data
             if type(data) == dict:
                 for msg_type, msg_text in data.items():
                     if msg_type == 'ChatMsg':
@@ -386,13 +386,11 @@ class ServerEnd:
                 user_pwd = msg_text.values()[0]
                 reply = self.__usr_login(sock, user_name, user_pwd)
 
-                if reply == '''{"SysMsg": {"SysLoginAck": "Successful login"}}''':
-                    self.__send_client_online_duration_msg(sock)
-
             # confirm a login like what TCP does
             if msg_id == 'SysLoginConfirmed':
                 user_name = msg_text
                 self.__confirm_login(sock, user_name)
+                self.__send_client_online_duration_msg(sock)
                 continue
 
             if msg_id == 'SysRegisterRequest':
@@ -425,7 +423,7 @@ class ServerEnd:
 
             if reply:
                 self.__safe_socket_send(sock, reply)
-                print "sys reply:", reply
+                print "sys reply : ", reply
 
     def __confirm_login(self, sock, user_name):
         self.__socket_username_dict[sock] = user_name
@@ -498,11 +496,11 @@ class ServerEnd:
         and make a reply
         '''
         if not self.__usr_database.has_key(user_name):
-            print "account not exists"
+            # print "account not exists"
             return package_sys_msg('SysLoginAck', "Account Not exists")
 
         if user_name in self.__usr_logIn_or_logout and self.__usr_logIn_or_logout[user_name]:
-            print "usr is already online"
+            # print "usr is already online"
             return package_sys_msg('SysLoginAck', "This User is already online")
 
         if self.__usr_database[user_name]['pwd'] == user_pwd:
@@ -516,7 +514,7 @@ class ServerEnd:
         and make a reply
         '''
         if self.__usr_database.has_key(user_name):
-            print "Account Already Registered"
+            # print "Account Already Registered"
             return package_sys_msg('SysRegisterAck', "Account has already been registered")
 
         self.__usr_database[user_name] = {'pwd': user_pwd, 'lastLogin': time.time(), 'totalTime': 0.0}
