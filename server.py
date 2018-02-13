@@ -105,7 +105,7 @@ class ServerEnd:
     def __close_dead_socket(self, sock):
         self.__sock_lock.acquire()
 
-        # print "sock to close:", sock
+        print "close socket:", sock
         # print "sock list", self.__sockCollections
 
         user_name = self.__get_user_name(sock)
@@ -156,6 +156,7 @@ class ServerEnd:
             sock.sendall('*')
         except socket.error as e:
             print sock, 'is down', e
+            self.__close_dead_socket(sock)
             return False
         else:
             return True
@@ -236,7 +237,7 @@ class ServerEnd:
 
     def __update_user_online_time(self, sock):
         user_name = self.__get_user_name(sock)
-        if self.__usr_status[sock].client_has_login_or_not():
+        if sock in self.__usr_status and self.__usr_status[sock].client_has_login_or_not():
             self.__usr_database[user_name]['lastLogin'] = self.__usr_status[sock].get_client_login_time_stamp()
             self.__usr_database[user_name]['totalTime'] += self.__usr_status[sock].get_client_online_duration()
 
@@ -311,13 +312,15 @@ class ServerEnd:
         :return: (a, b) a is True or False, which means whether the server needs to reply to client or not
                         b is the message that the function returned
         '''
+
+        print "client msg: ", msg
+
         data = ''
         try:
             data = json.loads(msg)
         except Exception as e:
             print 'exception in loading json data: ', e
         finally:
-            print "client msg: ", data
             if type(data) == dict:
                 for msg_type, msg_text in data.items():
                     if msg_type == 'ChatMsg':
@@ -363,7 +366,7 @@ class ServerEnd:
                 if sock in room_sockets:
                     for receiver_sock in room_sockets:
                         if receiver_sock != sock:
-                            print receiver_sock, received_data
+                            # print receiver_sock, received_data
                             self.__safe_socket_send(receiver_sock, received_data)
 
     def __get_sock_with_username(self, user_name):
@@ -561,51 +564,47 @@ class ServerEnd:
 
         self.__init_socket()
         quit_program = False
-
         try:
             while not quit_program:
 
                 sock_list = self.__client_sockets + [self.server_socket, sys.stdin]
 
-                read_list, write_list, error_list = select.select(sock_list, [], sock_list)
+                # print "select sockets: ", self.__client_sockets
 
-                for sock in read_list:
-                    if sock == self.server_socket:
-                        # new client
-                        new_client, new_addr = socket_accept(sock)
-                        self.__accept_new_client(new_client)
-                    else:
-                        if type(sock) == socket._socketobject:
-                            # msg received from client
-                            try:
-                                received_data = socket_recv(sock, self.recv_buffer_size)
-                            except socket.error as err:
-                                print "failed to receive data, close invalid socket, then"
-                                self.__close_dead_socket(sock)
-                            else:
-                                self.__analyse_received_data(sock, received_data)
+                try:
+                    read_list, write_list, error_list = select.select(sock_list, [], sock_list)
+                except select.error as err:
+                    print 'socket select error, some clients might be offline', err
 
-                        if type(sock) == file:
-                            msg = sys.stdin.readline()
-                            if msg == 'esc\n' or msg == '':
-                                quit_program = True
-                            else:
-                                self.__broadcast_server_chat_msg(self.__client_sockets, msg)
+                try:
+                    for sock in error_list:
+                        print "socket error", sock
+                        self.__close_dead_socket(sock)
 
-                for sock in error_list:
-                    self.__close_dead_socket(sock)
+                    for sock in read_list:
+                        if sock == self.server_socket:
+                            # new client
+                            new_client, new_addr = socket_accept(sock)
+                            self.__accept_new_client(new_client)
+                        else:
+                            if type(sock) == socket._socketobject:
+                                # msg received from client
+                                try:
+                                    received_data = socket_recv(sock, self.recv_buffer_size)
+                                except socket.error as err:
+                                    print "failed to receive data, close invalid socket, then"
+                                    self.__close_dead_socket(sock)
+                                else:
+                                    self.__analyse_received_data(sock, received_data)
 
-                if quit_program:
-                    self.__close_server()
-                    break
+                except Exception as e:
+                    # choose exception type
+                    print 'Find Exception', e
 
-        except select.error as e:
-            print 'Select error', e
-
-        except Exception as e:
-            # choose exception type
-            print 'Find Exception', e
-            self.__close_server()
+                finally:
+                    if quit_program:
+                        self.__close_server()
+                        break
 
         except KeyboardInterrupt:
             print 'Find KeyboardInterrupt'
