@@ -597,7 +597,7 @@ class ServerEnd:
                         self.__close_server()
                         break
 
-        except KeyboardInterrup as e:
+        except KeyboardInterrupt as e:
             print 'Find KeyboardInterrupt', e
 
         finally:
